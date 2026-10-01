@@ -23,4 +23,7 @@
 hs_err_pid*
 replay_pid*
 
-*.env
+.env
+application-local.yml
+.idea/
+*.iml
