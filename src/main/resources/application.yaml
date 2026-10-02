@@ -1,3 +1,15 @@
 spring:
   application:
     name: fivegoodmins
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/fivegoodmins
+    username: app
+    password: app
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate.jdbc.time_zone: UTC
+
