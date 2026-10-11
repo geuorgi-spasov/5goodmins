@@ -1,5 +1,12 @@
 HELP.md
 target/
+
+### Secrets ###
+# .env holds the database password and, from week 7, the mail provider's API
+# key. .env.example is the committed template and carries no real values.
+.env
+.env.*
+!.env.example
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
