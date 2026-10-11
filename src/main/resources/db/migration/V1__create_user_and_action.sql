@@ -33,13 +33,21 @@ CREATE TABLE app_user (
     email               varchar(254)  NOT NULL,
     -- 254 is the practical RFC 5321 maximum for an address.
 
-    password_hash       varchar(100)  NOT NULL,
-    -- BCrypt is 60 chars; 100 leaves room for the {bcrypt} prefix that
-    -- DelegatingPasswordEncoder writes and for a later move to Argon2.
+    password_hash       varchar(255)  NOT NULL,
+    -- BCrypt is 60 chars, so {bcrypt} + hash = 68. Argon2id as Spring Security
+    -- encodes it is 97 ($argon2id$v=19$m=16384,t=2,p=1$ = 31, + 22 salt + 1 +
+    -- 43 hash), so {argon2} + hash = 105 -- which means varchar(100) would have
+    -- made the Argon2 move a schema migration rather than a config change.
+    -- 255 so the choice of encoder is never a migration again.
 
     display_name        varchar(80)   NOT NULL,
     bio                 text,
-    website_url         varchar(2048),
+    website_url         varchar(500),
+    -- 500, not 2048 like action.external_url: this is a profile link someone
+    -- types, not a campaign URL carrying tracking parameters. The entity's
+    -- @Column(length = 500) must agree with this number, because
+    -- ddl-auto=validate compares column existence and type but NOT length --
+    -- a disagreement here is silent, and the database wins.
 
     role                varchar(20)   NOT NULL DEFAULT 'USER',
     enabled             boolean       NOT NULL DEFAULT true,
@@ -74,7 +82,10 @@ CREATE TABLE app_user (
     -- without citext and without a functional index every query must match.
 
     CONSTRAINT ck_app_user_display_name_length
-        CHECK (char_length(display_name) BETWEEN 1 AND 80),
+        CHECK (char_length(btrim(display_name)) >= 1),
+    -- btrim, because char_length('   ') is 3 and a name of three spaces is not
+    -- a name. The upper bound is varchar(80) itself, so repeating it here would
+    -- be a second place to change. @NotBlank is the friendly half of this.
     CONSTRAINT ck_app_user_bio_length
         CHECK (char_length(bio) <= 1000),
     -- NULL bio -> the expression is NULL -> the CHECK passes. A CHECK only
@@ -163,9 +174,13 @@ CREATE TABLE action (
     -- original with no normalized form escapes duplicate detection.
 
     CONSTRAINT ck_action_title_length
-        CHECK (char_length(title) BETWEEN 5 AND 200),
+        CHECK (char_length(btrim(title)) >= 5),
+    -- btrim for the same reason as display_name; varchar(200) is the cap.
     CONSTRAINT ck_action_description_length
-        CHECK (char_length(description) BETWEEN 1 AND 5000),
+        CHECK (char_length(btrim(description)) >= 1
+               AND char_length(description) <= 5000),
+    -- Two halves on purpose: btrim for "not just whitespace", untrimmed for the
+    -- storage cap, because description is text and has no cap from its type.
 
     CONSTRAINT ck_action_type
         CHECK (action_type IN ('PETITION', 'LETTER_OR_EMAIL', 'SURVEY',

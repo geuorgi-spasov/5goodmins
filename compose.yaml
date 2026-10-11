@@ -1,6 +1,11 @@
+# The Postgres major version must match the deployed one (ADR-004/018): a
+# pg_dump taken from a newer server cannot be restored into an older one, and
+# behaviour that only exists locally is behaviour you have not tested. Railway's
+# official image is 16/17 -- run SELECT version() there and keep this tag, the
+# tag in TestcontainersConfiguration, and Railway in agreement.
 services:
   db:
-    image: postgres:18
+    image: postgres:17
     environment:
       POSTGRES_DB: fivegoodmins
       POSTGRES_USER: app
@@ -8,12 +13,19 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql
+      # /var/lib/postgresql/data is PGDATA on 17 and earlier. Postgres 18 moved
+      # the image's declared volume up to /var/lib/postgresql, so this path is
+      # tied to the tag above and both change together.
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d fivegoodmins"]
       interval: 5s
       retries: 10
 
+  # Dev-only mail sink. Production sends through a transactional provider's HTTP
+  # API (ADR-005); Mailpit exists so the three HTML email templates can be read
+  # in a real client. Both sit behind one EmailSender interface, so the dev and
+  # production paths differ in one class, not in the calling code.
   mailpit:
     image: axllent/mailpit
     ports:

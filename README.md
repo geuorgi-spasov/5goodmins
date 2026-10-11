@@ -16,10 +16,10 @@ Work in progress.
 - Java 21
 - Spring Boot 4.1 (Web MVC, Data JPA, Security, Validation)
 - Thymeleaf + htmx for the pages
-- PostgreSQL
+- PostgreSQL 17 — pinned to match the deployed major version
 - Flyway for migrations
 - Maven
-- JUnit 5, Mockito, Testcontainers
+- JUnit 6 (what Spring Boot 4.1 ships), Mockito, AssertJ, Testcontainers
 - Docker / Docker Compose
 
 ---
@@ -29,11 +29,15 @@ Work in progress.
 Done:
 
 - Spring Boot skeleton, package-by-feature layout
-- Docker Compose: application, PostgreSQL, Mailpit for local mail
+- Docker Compose for the backing services: PostgreSQL and Mailpit
 - Flyway `V1__` migration — the user and action schema
+- `AppUser` and `Action` entities with repository tests on a real PostgreSQL
 
-Next:
+Next, in order:
 
+- Dockerfile and an `app` service in Compose, so one command runs everything
+- GitHub Actions pipeline
+- Deploy to Railway behind the real domain
 - Registration, login, email verification
 - Submitting and listing actions
 - Subscriptions and the daily digest email
@@ -42,45 +46,46 @@ Next:
 
 ## Running it locally
 
-Needs Docker. No local Java or PostgreSQL required.
+Needs Docker and Java 21. The application is not containerised yet — Compose
+runs the backing services only, which is the next thing on the list above.
 
 ```bash
-cp .env.example .env
-docker compose up --build
+docker compose up -d          # PostgreSQL + Mailpit
+./mvnw spring-boot:run        # the application
 ```
 
 - Application — http://localhost:8080
 - Mailpit (catches outgoing mail) — http://localhost:8025
-- PostgreSQL — localhost:5432
+- PostgreSQL — localhost:5432, database `fivegoodmins`, user/password `app`
 
 Flyway applies the migrations on startup.
-
-To run the app from IntelliJ instead, you need Java 21 and a reachable
-PostgreSQL, then:
-
-```bash
-./mvnw spring-boot:run
-```
 
 Tests:
 
 ```bash
-./mvnw test      # unit tests
-./mvnw verify    # also repository tests (needs Docker, uses Testcontainers)
+./mvnw test
 ```
+
+Every test needs Docker: the repository tests run against a real PostgreSQL via
+Testcontainers, because the full-text search this project depends on does not
+exist in an in-memory database. One container is started for the whole suite.
 
 ---
 
 ## Configuration
 
-Everything comes from environment variables, so the application can move hosts
-without code changes. See `.env.example`.
+`application.yaml` holds local-development defaults. Every value can be
+overridden by an environment variable through Spring's relaxed binding, so the
+application moves hosts without code changes.
 
 | Variable | Purpose |
 |---|---|
 | `SPRING_DATASOURCE_URL` / `_USERNAME` / `_PASSWORD` | Database connection |
 | `APP_BASE_URL` | Base URL used in email links |
 | `SPRING_PROFILES_ACTIVE` | `dev` or `prod` |
+
+Mail goes to Mailpit in development and to a transactional provider's HTTP API
+in production, behind one `EmailSender` interface.
 
 ---
 
@@ -118,7 +123,8 @@ three regions, and a mandatory end date.
 **Regions (30):** Bulgaria's 28 oblasti plus `NATIONAL` and `INTERNATIONAL`.
 
 **Statuses (4):** `PENDING`, `PUBLISHED`, `REJECTED`, `WITHDRAWN`. Only
-`PUBLISHED` actions are publicly visible.
+`PUBLISHED` actions are publicly visible. An admin moves an action between the
+first three in any direction; `WITHDRAWN` is the poster's own reversible choice.
 
 **Roles (3):** `USER`, `POSTER`, `ADMIN`.
 

@@ -71,129 +71,12 @@ public class Action {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
-    // search_vector is deliberately not mapped — see note below
+    // search_vector is deliberately not mapped: Postgres computes it from title
+    // and description on every write, and nothing in Java ever reads it. An
+    // unmapped column is invisible to ddl-auto=validate, which only checks that
+    // the columns the entity *does* declare exist with matching types.
 
-    protected Action() { }
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public AppUser getAuthor() {
-        return author;
-    }
-
-    public void setAuthor(AppUser author) {
-        this.author = author;
-    }
-
-    public String getTitle() {
-        return title;
-    }
-
-    public void setTitle(String title) {
-        this.title = title;
-    }
-
-    public ActionType getActionType() {
-        return actionType;
-    }
-
-    public void setActionType(ActionType actionType) {
-        this.actionType = actionType;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-
-    public void setDescription(String description) {
-        this.description = description;
-    }
-
-    public String getNormalizedUrl() {
-        return normalizedUrl;
-    }
-
-    public void setNormalizedUrl(String normalizedUrl) {
-        this.normalizedUrl = normalizedUrl;
-    }
-
-    public String getExternalUrl() {
-        return externalUrl;
-    }
-
-    public void setExternalUrl(String externalUrl) {
-        this.externalUrl = externalUrl;
-    }
-
-    public String getVideoUrl() {
-        return videoUrl;
-    }
-
-    public void setVideoUrl(String videoUrl) {
-        this.videoUrl = videoUrl;
-    }
-
-    public ActionStatus getStatus() {
-        return status;
-    }
-
-    public void setStatus(ActionStatus status) {
-        this.status = status;
-    }
-
-    public Instant getEndsAt() {
-        return endsAt;
-    }
-
-    public void setEndsAt(Instant endsAt) {
-        this.endsAt = endsAt;
-    }
-
-    public Instant getPublishedAt() {
-        return publishedAt;
-    }
-
-    public void setPublishedAt(Instant publishedAt) {
-        this.publishedAt = publishedAt;
-    }
-
-    public Set<Category> getCategories() {
-        return categories;
-    }
-
-    public void setCategories(Set<Category> categories) {
-        this.categories = categories;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
-    public void setCreatedAt(Instant createdAt) {
-        this.createdAt = createdAt;
-    }
-
-    public Set<Region> getRegions() {
-        return regions;
-    }
-
-    public void setRegions(Set<Region> regions) {
-        this.regions = regions;
-    }
-
-    public Instant getUpdatedAt() {
-        return updatedAt;
-    }
-
-    public void setUpdatedAt(Instant updatedAt) {
-        this.updatedAt = updatedAt;
-    }
+    protected Action() { }   // required by JPA, not for your code
 
     public Action(AppUser author, String title, String description,
                   ActionType actionType, Instant endsAt) {
@@ -216,6 +99,17 @@ public class Action {
         return Action.class.hashCode();
     }
 
+    // -----------------------------------------------------------------------
+    // State transitions (ADR-016).
+    //
+    // These are the only way status and published_at change. There is no
+    // setStatus and no setPublishedAt on purpose: published_at must be written
+    // exactly once ever, because the digest watermark (ADR-005) treats it as
+    // immutable, and a public setter would make the whole pattern unsound.
+    // ck_action_published_at_required in the database is the backstop for code
+    // paths that do not go through this class, not the primary defence.
+    // -----------------------------------------------------------------------
+
     /** Sets published_at exactly once, ever. The digest depends on this. */
     public void publish(Instant now) {
         this.status = ActionStatus.PUBLISHED;
@@ -231,6 +125,11 @@ public class Action {
     public void reject()          { this.status = ActionStatus.REJECTED; }
     public void returnToPending() { this.status = ActionStatus.PENDING; }
 
+    /** True once the action has been published at least once, whatever its
+     *  current status. This is the fact the POSTER threshold counts, not the
+     *  current status, because the state graph is cyclic (ADR-016). */
+    public boolean hasBeenPublished() { return publishedAt != null; }
+
     public void setLink(String externalUrl, String normalizedUrl) {
         if ((externalUrl == null) != (normalizedUrl == null))
             throw new IllegalArgumentException("both URL columns or neither");
@@ -239,5 +138,103 @@ public class Action {
     }
 
     public boolean isExpired(Instant now) { return endsAt.isBefore(now); }
-    // getters; no setStatus, no setPublishedAt, no setId, no setCreatedAt
+
+    // -----------------------------------------------------------------------
+    // Accessors. No setId (the database assigns it), no setStatus or
+    // setPublishedAt (see above), no setCreatedAt or setUpdatedAt (Hibernate's
+    // @CreationTimestamp / @UpdateTimestamp own them and overwrite anything a
+    // setter wrote at flush time, so such a setter is a trap, not an API).
+    // -----------------------------------------------------------------------
+
+    public Long getId() {
+        return id;
+    }
+
+    public AppUser getAuthor() {
+        return author;
+    }
+
+    public void setAuthor(AppUser author) {
+        this.author = author;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public ActionType getActionType() {
+        return actionType;
+    }
+
+    public void setActionType(ActionType actionType) {
+        this.actionType = actionType;
+    }
+
+    public String getExternalUrl() {
+        return externalUrl;
+    }
+
+    public String getNormalizedUrl() {
+        return normalizedUrl;
+    }
+
+    public String getVideoUrl() {
+        return videoUrl;
+    }
+
+    public void setVideoUrl(String videoUrl) {
+        this.videoUrl = videoUrl;
+    }
+
+    public ActionStatus getStatus() {
+        return status;
+    }
+
+    public Instant getPublishedAt() {
+        return publishedAt;
+    }
+
+    public Instant getEndsAt() {
+        return endsAt;
+    }
+
+    public void setEndsAt(Instant endsAt) {
+        this.endsAt = endsAt;
+    }
+
+    public Set<Category> getCategories() {
+        return categories;
+    }
+
+    public void setCategories(Set<Category> categories) {
+        this.categories = categories;
+    }
+
+    public Set<Region> getRegions() {
+        return regions;
+    }
+
+    public void setRegions(Set<Region> regions) {
+        this.regions = regions;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
 }
