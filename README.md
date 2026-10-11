@@ -156,6 +156,17 @@ notifications, a mobile app.
 
 ---
 
+## Documentation
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the decision log. Every
+  choice that was hard to reverse, what it cost, and what was rejected.
+- [`docs/INTERVIEW-QA.md`](docs/INTERVIEW-QA.md) — the reasoning behind those
+  decisions, written as answers.
+- [`docs/FRONTEND-BRIEF.md`](docs/FRONTEND-BRIEF.md) — page inventory, domain
+  vocabulary and ground rules for the frontend.
+
+---
+
 ## License
 
 Source code is licensed under the

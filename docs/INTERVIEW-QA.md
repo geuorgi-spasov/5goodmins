@@ -1,0 +1,952 @@
+# Interview Q&A — 5 Good Minutes
+
+Running reference. Every entry is something this project's design actually
+justifies, phrased the way I would answer it out loud. Keep it in `docs/`
+next to `ARCHITECTURE.md` and add to it as the build goes on.
+
+Marker key:
+- **[COLD]** — must be answerable with no thinking time. These come up constantly.
+- **[WARM]** — should be able to reconstruct the reasoning in a few seconds.
+- **[DEEP]** — only comes up with a strong interviewer; a very good answer to give.
+
+---
+
+## 1. Primary keys and identity
+
+### Q: Why `BIGINT` identity and not UUID? **[COLD]**
+
+Single database, single application instance, browser clients. UUID's real
+benefits — client-side id generation for offline or distributed writers, and
+idempotent retries where the client supplies the id — are benefits I have no
+use for. Its costs are real at any scale: 16 bytes instead of 8 in every
+primary key and every foreign key index, and random values that scatter
+inserts across the B-tree, causing page splits and half-empty pages instead
+of appending to one hot page at the right-hand edge.
+
+The one argument that does apply is URL enumeration — `/actions/41`,
+`/actions/42` invites scraping. But published actions are public by design,
+and non-public ones must be protected by an authorization check, not by an
+unguessable id. Hiding an IDOR behind a UUID is not fixing it.
+
+### Q: Why `GENERATED ALWAYS AS IDENTITY` rather than `BIGSERIAL`? **[WARM]**
+
+`SERIAL` is the pre-Postgres-10 shorthand: a separately owned sequence plus a
+column default. Identity is the SQL standard replacement — the column owns its
+sequence, permissions follow the table, and `ALWAYS` rejects hand-supplied ids
+unless you write `OVERRIDING SYSTEM VALUE`. That stops a manual insert from
+colliding with the sequence later.
+
+### Q: Doesn't `GenerationType.IDENTITY` disable Hibernate batch inserts? **[COLD]**
+
+Yes. Hibernate keys every entity in the persistence context by its id, and
+with identity the id only exists after the INSERT has executed. So it cannot
+queue INSERTs to batch them — each one goes immediately.
+
+It doesn't matter here: my only bulk insert is the Flyway seed migration,
+which is plain SQL and never touches Hibernate. If it did matter I would
+switch to `GenerationType.SEQUENCE` with `allocationSize = 50` and a matching
+`INCREMENT BY 50` on the sequence, so one `nextval` reserves 50 ids.
+
+### Q: What happens if `allocationSize` and `INCREMENT BY` disagree? **[DEEP]**
+
+Primary key collisions, intermittently. Hibernate calls `nextval`, gets `1`,
+and assumes it owns ids 1–50. With `INCREMENT BY 1` the next caller gets `2`
+and assumes it owns 2–51. The blocks overlap, so you get
+`DataIntegrityViolationException` on the PK under concurrency or after a
+restart — not reproducible on demand, which is what makes it nasty.
+
+### Q: Your ids have gaps. Is that a bug? **[WARM]**
+
+No. Sequences are non-transactional: a rolled-back insert still burns its id,
+and a pooled sequence discards unused ids on shutdown. An id is an identifier,
+not a counter. Never use `MAX(id)` to count rows.
+
+---
+
+## 2. Time
+
+### Q: `timestamp` or `timestamptz`? **[COLD]**
+
+`timestamptz`, always. Despite the name it does not store a time zone — it
+stores an absolute UTC instant and converts on display. Plain `timestamp`
+stores wall-clock digits with no zone, so "02:30" is ambiguous twice a year in
+Europe/Sofia. Java side is `Instant`, plus
+`hibernate.jdbc.time_zone=UTC` so the JVM default zone is irrelevant.
+`ZonedDateTime` in Europe/Sofia only at render time.
+
+### Q: Which Java time type maps to what? **[COLD]**
+
+| Java | Meaning | Postgres |
+|---|---|---|
+| `Instant` | a moment on the UTC timeline | `timestamptz` |
+| `LocalDateTime` | wall-clock digits, no zone | `timestamp` (avoid) |
+| `LocalDate` | a calendar day | `date` |
+| `ZonedDateTime` | moment + zone, for display | — |
+
+Never `java.util.Date`.
+
+### Q: Your entity test compares `Instant`s and fails. Why? **[DEEP]**
+
+`Instant.now()` has nanosecond precision; Postgres `timestamptz` stores
+microseconds. Save, reload, `assertEquals` — the trailing digits are gone.
+Fix with `truncatedTo(ChronoUnit.MICROS)`, or inject a fixed `Clock` in tests.
+
+### Q: Two rows inserted in one transaction have identical `created_at`. Problem? **[DEEP]**
+
+`now()` returns transaction start time, not wall-clock time, so yes, they are
+identical. Two consequences:
+
+1. `ORDER BY created_at DESC` has undefined order among ties, so keyset or
+   offset pagination can repeat or skip rows. Every list query carries a
+   tiebreaker: `ORDER BY published_at DESC, id DESC`.
+2. A watermark batch job can miss rows (see §6).
+
+---
+
+## 3. Schema conventions
+
+### Q: Why is the table called `app_user`? **[COLD]**
+
+`user` is reserved in Postgres — `SELECT user` returns the current role. Using
+it means quoting it in every migration and every native query, and the day
+someone forgets, the unquoted version does not fail, it silently means
+something else.
+
+### Q: Singular or plural table names? **[WARM]**
+
+Singular, matching entity class names and avoiding irregular plurals
+(`person`/`people`, `status`/`statuses`). Neither is wrong. What is wrong is
+mixing them. I picked one and applied it consistently.
+
+### Q: Why name every constraint explicitly? **[WARM]**
+
+Because the application reads constraint names. Duplicate detection catches
+`DataIntegrityViolationException` and has to tell "this action already exists"
+from "that email is taken". Auto-generated names like
+`action_normalized_url_key` work, but depending on a name the database chose
+for you is an accident waiting to break.
+
+### Q: You have Bean Validation. Why also `NOT NULL` and `CHECK` in the database? **[COLD]**
+
+Different jobs, different audiences. Bean Validation produces friendly
+localized messages before the database is touched — it is UX. Database
+constraints are invariants that hold no matter what code runs: the Flyway seed
+migration, a future admin tool, a bug, or me in `psql` at midnight. The
+database is the source of truth; the Java layer is a nicer error message.
+
+The cost is duplication — the length limit exists in the migration and in
+`@Size`. I keep the Java side in one constants class so at least that side has
+one home.
+
+### Q: Why not put business rules in `CHECK` constraints? **[WARM]**
+
+A `CHECK` can only see the row being inserted or updated. Anything that
+depends on other rows, other tables, or the current time cannot be expressed
+in one, and anything that is policy rather than integrity should be able to
+change without a migration. "Only verified posters publish immediately" is
+service logic; "status must be one of these four strings" is integrity.
+
+### Q: `CHECK (email = lower(email))` — what is that for? **[WARM]**
+
+It asserts the stored value is already lowercase. Combined with a plain
+`UNIQUE (email)`, it gives case-insensitive uniqueness without any of the
+alternatives' downsides: `citext` is another extension with awkward JPA
+mapping, and a unique index on `lower(email)` only helps if every query
+remembers to write `lower()` — one that forgets silently skips the index.
+Normalizing in the application and letting the database verify it is the
+cheapest correct option.
+
+### Q: So where does the lowercasing actually happen? **[WARM]**
+
+In the registration service, before the save:
+`user.setEmail(form.getEmail().trim().toLowerCase(Locale.ROOT))`. The
+constraint converts nothing — it refuses. A row carrying `Georgi@abv.bg` is
+rejected outright with a named constraint violation.
+
+That is the division of labour I would state in one line: **the application
+normalizes, the database verifies.** In normal operation the constraint never
+fires. It fires the day a new code path — an admin form, a seed migration, me
+in `psql` — forgets to normalize, and then it fails loudly at the moment of the
+bug instead of quietly creating a second account for the same mailbox.
+
+`Locale.ROOT` matters: on a JVM with a Turkish default locale,
+`"I".toLowerCase()` returns the dotless `ı`, so addresses stop matching
+themselves.
+
+---
+
+## 4. Enums and reference data
+
+### Q: `EnumType.STRING` or `ORDINAL`? **[COLD]**
+
+Always `STRING`. `ORDINAL` stores the enum's position, so the day someone
+inserts a constant in the middle or reorders the list, every existing row
+silently means something different. That is a data-corruption bug with no
+error message. The cost of `STRING` is a few bytes per row.
+
+### Q: Why an enum plus a `CHECK` instead of a lookup table? **[WARM]**
+
+The 30 regions change only when Bulgaria's administrative law changes. A
+lookup table would add a join to every query, four more files, and an admin UI
+nobody needs, and it would lose compile-time safety in Java. If the product
+ever goes multi-country, migrating to a table is a day's work — I can name the
+trigger that would make me do it.
+
+### Q: Why not a native Postgres `ENUM` type? **[WARM]**
+
+Adding a value is fine, removing or reordering one is painful, and Hibernate
+needs extra mapping for it. `varchar` + `CHECK` gives the same guarantee with
+plain types, and changing the allowed set is an ordinary migration.
+
+### Q: Why a join table for categories rather than `category1/2/3` columns? **[WARM]**
+
+Numbered nullable columns cannot be queried or indexed sensibly — filtering
+means `WHERE category1 = ? OR category2 = ? OR category3 = ?`, and allowing a
+fourth means a migration plus touching every query. A join table with a
+composite primary key `(action_id, category)` gives uniqueness, cascade
+delete, and a single indexable column for free.
+
+### Q: Why not a Postgres array column then? **[DEEP]**
+
+I considered it. An array enforces the maximum of three in a plain `CHECK`,
+which a join table cannot do without a trigger, and it avoids a second query
+on list pages. I chose the join table because `@ElementCollection` is standard
+JPA that I can defend line by line, while the array mapping is
+Hibernate-6-specific and would have needed a spike to prove. The array is the
+slightly better design; the join table was the better decision for my
+constraints.
+
+### Q: Why are the enum constants in English when the product is Bulgarian? **[WARM]**
+
+Identifiers and code are English by project rule — the constant is
+`STARA_ZAGORA`, the label comes from `messages_bg.properties` and
+`messages_en.properties`. Putting Cyrillic in the database would mean the
+display text is stored in the schema, so translating the UI would need a
+migration. The enum name is an identifier, not a label.
+
+---
+
+## 5. Hibernate and JPA
+
+### Q: What is dirty checking? **[COLD]**
+
+Inside a transaction Hibernate keeps a snapshot of each loaded entity. At
+flush time it compares the entity to its snapshot and issues UPDATEs for
+whatever changed. You do not call `save()` to update an existing row — you
+change a field inside `@Transactional` and it is written.
+
+### Q: What is the N+1 problem, and how do you find it? **[COLD]**
+
+One query loads N rows, then touching a lazy association on each row runs one
+more query per row. Typical symptom: a list page that is fast with 5 rows and
+slow with 200.
+
+I find it by turning on `hibernate.generate_statistics` (or `datasource-proxy`)
+in dev and reading the query count. I fix it with a fetch join or, on list
+pages, by not loading entities at all — a DTO projection selects the columns
+the page renders and nothing else.
+
+### Q: Why `spring.jpa.open-in-view=false`? **[COLD]**
+
+Open Session In View is on by default and keeps the Hibernate session open
+through view rendering, so a lazy association touched inside a template
+quietly issues a query. That hides N+1 until production. Turning it off makes
+the same code throw `LazyInitializationException` at development time, which
+forces the loading decision into the service layer where it belongs, inside a
+transaction.
+
+### Q: What does a JPQL bulk update (`@Modifying @Query`) skip? **[DEEP]**
+
+It is translated straight to SQL, so it bypasses: the persistence context
+(already-loaded entities keep stale values and dirty checking can write them
+back), `@UpdateTimestamp` and `@Version`, entity lifecycle callbacks, and
+cascades. Concretely: an admin "hide" button written as a bulk update leaves
+`updated_at` untouched, because Hibernate never inspected an entity and the
+column's `DEFAULT now()` only applies on INSERT.
+
+At one row per click I load the entity and set the field instead. If I keep
+the bulk query I set `updated_at` in it explicitly, and use
+`@Modifying(flushAutomatically = true, clearAutomatically = true)`.
+
+### Q: How do you implement `equals`/`hashCode` on a JPA entity? **[COLD]**
+
+`hashCode` returns a constant (or `getClass().hashCode()`), and `equals`
+compares the id, treating two entities with null ids as non-equal unless they
+are the same instance. The trap is using a generated id in `hashCode`: an
+entity added to a `HashSet` before persist gets one bucket, then the id is
+assigned and the object is no longer findable in its own set. Using business
+fields breaks the moment they are editable.
+
+### Q: Why `ddl-auto=validate`? **[COLD]**
+
+Flyway owns the schema. Hibernate's only job at startup is to confirm the
+entity mappings match the tables — if they have drifted, the application fails
+to start rather than producing wrong SQL at runtime. Anything other than
+`validate` means two systems fighting over the same database.
+
+### Q: What does `validate` actually check? **[DEEP]**
+
+Column existence and type. Not much else — and I know because I shipped a
+mismatch and went looking. My entity had `@Column(length = 500)` on a column the
+migration declared `varchar(2048)`. The context started normally and a
+620-character value was stored without complaint.
+
+So `validate` does not compare lengths, defaults, indexes, or the contents of a
+`CHECK` constraint — adding a value to an enum's `CHECK` is invisible to it.
+Under `validate`, `length` and `unique = true` on `@Column` are
+DDL-generation metadata that nothing reads: they are documentation, and
+documentation can be wrong. The entity and the migration have to be changed
+together, by hand.
+
+The useful follow-up is what *would* catch it: a repository test against the
+real database, which is also the only thing that catches a missing `package`
+declaration (§16).
+
+---
+
+## 6. The digest job
+
+### Q: Explain the watermark pattern. **[COLD]**
+
+One column, `app_user.last_digest_sent_at`. Nightly, for each subscriber:
+select actions published after that timestamp matching their categories and
+regions; if non-empty, render and send; set the watermark to the cutoff *only
+after a successful send*. No queue table, no per-user rows, idempotent, and if
+the job fails for two days the next run picks up everything missed.
+
+### Q: Why `published_at` and not `created_at` or `updated_at`? **[COLD]**
+
+`created_at` is when the row was inserted, which for an action awaiting
+approval can be days before it is public. A user whose digest ran in between
+has a watermark later than `created_at`, so the action never matches and is
+invisible to them forever.
+
+`updated_at` is worse: a poster fixing a typo three weeks later would push the
+action back above every watermark and re-send it to the entire platform.
+
+`published_at` is set exactly once, at approval, and never touched again.
+That property is what makes it the right key.
+
+### Q: How can a watermark job miss a row even with `published_at`? **[DEEP]**
+
+`now()` is transaction start time. A publish transaction can start at 02:59:59,
+the digest job at 03:00:00 cannot see the uncommitted row, sets the watermark
+to 03:00:00, and the row then commits with `published_at = 02:59:59` — forever
+below every future watermark.
+
+Fix: a lag window. The job only considers rows with
+`published_at <= now() - interval '5 minutes'` and sets the watermark to that
+same cutoff, not to `now()`. No transaction stays open for five minutes, so
+nothing slips through. The cost is up to five minutes of latency in a job that
+runs once a day.
+
+### Q: Where does this design stop scaling? **[COLD]**
+
+The `@Scheduled` annotation runs in the application process, so it assumes
+exactly one instance. Two instances means every user gets two digests. It is
+documented as a known constraint with the fix named: ShedLock or a database
+advisory lock, or moving the digest to a separate worker deployment. Knowing
+where my own design breaks is more useful than pretending it doesn't.
+
+### Q: An admin rejects a published action by mistake and restores it. Does it get emailed? **[WARM]**
+
+Usually yes, occasionally no, and the "no" is deliberate. `published_at` is
+written once and never changed, including on restoration, so the action keeps
+its original timestamp. If the mistake is caught the same day, that timestamp
+is still above everyone's watermark and the action goes out in the next digest
+normally. If the round trip spans a digest run, the action is already below
+every watermark and nobody is emailed about it — it stays fully visible on the
+site, in search, and at its permanent URL.
+
+The alternative is re-stamping `published_at` on restoration, which would mail
+the action to the entire platform every time an admin reverses a decision —
+the same failure as keying the digest on `updated_at`. I would rather lose one
+email than re-send to every subscriber, so I accepted the gap and documented
+it.
+
+### Q: The server was down for two days and the job never ran. What do users get? **[COLD]**
+
+Everything they missed, in one email. The watermark advances only after a
+successful send, so after a two-day outage `last_digest_sent_at` is still where
+it was, and the next run selects every action published since then. Nothing is
+lost, no catch-up logic exists, and the job is safe to re-run at any time —
+that idempotence is the whole reason there is no queue table.
+
+### Q: Why an HTTP email API rather than SMTP? **[WARM]**
+
+Some hosts block outbound ports 25/465/587 outright, an HTTP API returns
+delivery status instead of a fire-and-forget handoff, and the provider manages
+SPF/DKIM. Plus a one-click unsubscribe link that works without login, which is
+a legal requirement in the EU, not a nicety.
+
+---
+
+## 7. Search
+
+### Q: Why Postgres full-text search rather than Elasticsearch? **[COLD]**
+
+At a few hundred actions, Elasticsearch is a second datastore to run,
+synchronize, and explain, for a dataset that fits in memory. The honest
+version: at this volume `ILIKE '%term%'` would perform identically. I built
+FTS because it is the right shape as content grows and because I wanted to
+learn it — not because the data forced it. I would rather say that than invent
+a performance justification.
+
+### Q: What is a `tsvector`? **[WARM]**
+
+A preprocessed, sorted list of the distinct lexemes in a document, each with
+its positions and optional weight — an inverted index for one row. Comparing
+it to a `tsquery` with `@@` is then a sorted-list intersection rather than a
+substring scan.
+
+### Q: Why is it a generated column rather than a trigger or application code? **[WARM]**
+
+A generated column is recomputed by Postgres on every insert or update of the
+source columns, so it cannot drift from the row. A trigger achieves the same
+with more moving parts; application code fails the moment anything writes
+outside the application — the seed migration, an admin fix, a bulk update.
+
+### Q: Why the `simple` configuration instead of a language one? **[COLD]**
+
+Postgres ships Snowball stemmers for about two dozen languages. Bulgarian is
+not one of them — check with `SELECT cfgname FROM pg_ts_config`. Using the
+English configuration would apply English stemming rules to Bulgarian, which
+is worse than none. `simple` tokenizes and lowercases without stemming.
+
+The consequence is real: Bulgarian is heavily inflected, so "петиция",
+"петиции" and "петицията" are three separate lexemes and do not match each
+other. That gap is what `pg_trgm` covers — a trigram similarity index on the
+title catches inflected forms and typos.
+
+### Q: You specified `unaccent` in your design doc and then removed it. Why? **[DEEP]**
+
+Two reasons, found in that order. First, generated column expressions must be
+`IMMUTABLE`, and `unaccent()` is `STABLE` because it reads a dictionary file
+that could change — so Postgres rejects the `ALTER TABLE` outright. The usual
+workaround is wrapping it in your own `IMMUTABLE` function, which lies to the
+planner: if the rules file ever changes, the stored index disagrees with new
+queries.
+
+Second, and more decisive: `unaccent` strips diacritics, which is a
+Latin-script problem. Bulgarian has no diacritics. It would only have helped
+with Latin transliteration, which is a different feature and partly covered by
+trigrams anyway. So I removed it rather than working around it.
+
+### Q: What is `setweight` doing? **[WARM]**
+
+It tags lexemes with a label A–D so `ts_rank` can score them differently.
+Title lexemes get A, description gets B, so an action with the search term in
+its title outranks one that merely mentions it in the body. Without weights,
+ranking is just term frequency, which favours long descriptions.
+
+### Q: What are function volatility categories? **[DEEP]**
+
+`IMMUTABLE` — same arguments always give the same result, forever, with no
+database access (`lower()`, `to_tsvector('simple', x)`). Can be used in index
+expressions and generated columns, and constant-folded by the planner.
+
+`STABLE` — consistent within a single statement, but can depend on database
+state or settings (`now()`, `unaccent()`, the one-argument `to_tsvector`).
+
+`VOLATILE` — can change on every call (`random()`, `nextval()`).
+
+The practical rule: index and generated-column expressions require
+`IMMUTABLE`, because the stored value has to stay correct forever. That is
+also why the one-argument `to_tsvector(x)` is rejected — it depends on the
+`default_text_search_config` session setting.
+
+---
+
+## 8. Indexes
+
+### Q: What is a B-tree, and why does key order matter? **[COLD]**
+
+A balanced tree of 8 KB pages holding keys in sorted order. Hundreds of keys
+per page means millions of rows are reachable in three or four page reads.
+Sequential keys always land at the right-hand edge, so one hot page stays in
+memory and pages fill completely. Random keys land anywhere, forcing page
+splits that leave half-empty pages and a larger index with worse cache
+behaviour.
+
+### Q: What is a GIN index and when do you use it? **[WARM]**
+
+GIN is a Generalized Inverted Index: instead of indexing whole values, it
+breaks each value into items and stores, for each item, the sorted list of row
+pointers containing it. That is exactly what you need when one column holds
+many searchable items — lexemes in a `tsvector`, trigrams in a string,
+elements in an array, keys in `jsonb`.
+
+Trade-offs: much faster than a B-tree for "contains this item" queries,
+slower to update (one row touches many index entries), and larger. GiST is the
+alternative — smaller and cheaper to write, but lossy, so it rechecks
+candidates against the heap. For a read-heavy catalogue, GIN.
+
+### Q: What is `gin_trgm_ops`? **[WARM]**
+
+An operator class: it tells GIN *how* to decompose the indexed value. The
+default for text has no idea what to do with a `varchar`. `gin_trgm_ops`, from
+`pg_trgm`, splits it into three-character sequences — "петиция" becomes
+"пет", "ети", "тиц" and so on. Two strings sharing many trigrams are similar,
+which is what powers `similarity()` and `%`, and it also makes unanchored
+`ILIKE '%term%'` indexable, which a B-tree cannot do.
+
+### Q: Does Postgres index foreign keys automatically? **[COLD]**
+
+No — it indexes primary keys and unique constraints, not the referencing side
+of a foreign key. Without an explicit index, every "all actions by this
+author" query and every cascade delete does a sequential scan. Unindexed
+foreign keys are a classic production slow-query cause.
+
+### Q: Why is your listing index partial? **[DEEP]**
+
+`CREATE INDEX ... (published_at DESC, id DESC) WHERE status = 'PUBLISHED'`.
+The listing only ever shows published actions, so indexing the rest wastes
+space and write time. The column order matches the query's `ORDER BY`
+exactly, including the tiebreaker, so the sort comes free from the index scan.
+
+---
+
+## 9. Deletion and integrity
+
+### Q: What happens to content when its author deletes their account? **[WARM]**
+
+Hard delete — the user, their subscriptions, their actions and images all go.
+GDPR Art. 17 requires erasure of personal data, not of everything a person
+authored, so keeping anonymized actions would arguably be compliant. I chose
+the simpler and slightly over-compliant option because the user's intent is
+that leaving means leaving, and there are no other stakeholders in that
+content yet. The cost is broken bookmarks and digest links, which return 404
+through the normal error page.
+
+### Q: Why is cascade delete in the database but `updated_at` in Java? **[COLD]**
+
+The dividing line is what breaking the rule costs. A missed cascade leaves
+orphan rows pointing at nothing — broken referential integrity, and here also
+personal data surviving an erasure request. That must hold whoever does the
+delete, so the database enforces it. A stale `updated_at` after a manual fix
+is slightly inaccurate audit metadata that harms nobody, so it is not worth a
+trigger per table and behaviour invisible to a Java reader.
+
+### Q: Your `POSTER` threshold is "three approved actions". How do you count that? **[DEEP]**
+
+Not with `status = 'PUBLISHED'`, which is what I wrote first and had to fix.
+
+The state graph is cyclic: an admin can move an action `PUBLISHED → REJECTED`
+and back, and a poster can withdraw and re-publish their own. So `status` is the
+*current* state, while the threshold asks a *historical* question — has an admin
+ever approved this action? Counting the current state means an author who
+published five actions and withdrew two counts as three, and one whose action
+was later taken down loses credit for work that really was approved. The count
+goes down over time, which a floor should never do.
+
+The fix was already in the schema. `published_at` is written exactly once, at
+the first transition to `PUBLISHED`, and never cleared — that is the immutability
+the digest watermark depends on. So it is also the record of "has been published
+at least once", and the query is
+`countByAuthorIdAndPublishedAtIsNotNull`. The one-directional `CHECK`
+(`status IN ('PENDING','REJECTED') OR published_at IS NOT NULL`) exists for the
+same reason: a `PENDING` row may legitimately carry a `published_at` from an
+earlier publication.
+
+The general lesson is the part worth saying out loud: a mutable status column
+cannot answer a question about the past, and if a timestamp already records the
+transition, that timestamp is the answer.
+
+### Q: Why not `cascade = REMOVE` on the JPA side as well? **[WARM]**
+
+Because then two systems own the same rule and can disagree. JPA cascade also
+loads every child entity into memory to delete them one row at a time, where
+`ON DELETE CASCADE` is one statement in the database. I declare it in the
+Flyway migration and use plain associations in JPA.
+
+---
+
+## 10. Auth and accounts
+
+### Q: Sessions or JWT? **[COLD]**
+
+Sessions, for a first-party browser client: revocable server-side, no
+token-in-localStorage XSS exposure, and less machinery. JWT when I add a
+client that cannot use cookies well, such as a mobile app. The answer is the
+tradeoff, not the technology.
+
+### Q: What is the downside of in-memory sessions? **[WARM]**
+
+Every deploy logs everyone out, and horizontal scaling breaks without sticky
+sessions. Correct for an MVP, documented as a constraint; Spring Session with
+JDBC is a two-line change when it matters.
+
+### Q: Rate limiting or account lockout? **[DEEP]**
+
+Rate limiting, with Bucket4j on `/login` and `/register` only. Lockout after N
+failures turns the login form into a denial-of-service weapon: anyone who
+knows a user's email can lock them out on purpose. It also needs a counter
+column, a reset path, an unlock email, and a decision about lockout duration.
+
+Rate limiting throttles the attacker without giving them a way to harm the
+account. If credential stuffing became a real problem I would add exponential
+backoff per IP and per account plus a CAPTCHA, not permanent lockout.
+
+### Q: Why does registration require email verification? **[WARM]**
+
+The address is the digest destination, so an unverified or mistyped one
+produces bounces and spam complaints, which damages sender reputation and
+sends every future digest to spam. It also raises the cost of fake accounts.
+
+It is not a DDoS defence — a flood of traffic never needs to finish
+registering. DDoS is handled by Cloudflare in front of the domain.
+
+### Q: How is the verification link implemented? **[WARM]**
+
+A signed, expiring token in the URL — HMAC over user id plus expiry — not a
+token table. Same mechanism as the one-click unsubscribe link, so it is one
+piece of infrastructure used twice. Unverified accounts are purged after seven
+days, and re-registration over an unverified row is allowed so nobody can
+squat someone else's address.
+
+### Q: Why no `Organization` entity? **[WARM]**
+
+`User` plus a `POSTER` role plus profile fields expresses everything the MVP
+needs. An `Organization` would force decisions nothing depends on yet: does it
+log in, can a user belong to several, who owns its actions. The named
+migration path is an `Organization` table plus a membership join, added when
+multi-member NGOs actually exist. The bad answer is "I didn't think about it";
+the good one is "here is the trigger that would make me add it".
+
+### Q: You have a `POSTER` role and a `poster_verified` flag. Aren't those the same fact? **[DEEP]**
+
+They were, and I removed the flag. Two columns holding one fact can disagree,
+and then nothing tells you which is authoritative. The role is the single
+source of truth for the privilege; `poster_verified_at` survives only because
+it records *when*, which the role cannot, and a `CHECK` keeps it consistent
+with the role.
+
+---
+
+## 11. Architecture
+
+### Q: Why package-by-feature? **[WARM]**
+
+With six features and four layers, package-by-layer gives four fat packages
+where nothing related is co-located and every change touches four directories.
+Package-by-feature keeps a change local and makes extracting a module later
+mechanical.
+
+### Q: Why not microservices, Kafka, Redis, or Elasticsearch? **[COLD]**
+
+None of them solves a problem I have. At this scale each would add an
+operational component, a failure mode, and a synchronization problem in
+exchange for nothing. Reaching for them before having the problem is the
+signal I would want to avoid in someone else's design.
+
+### Q: Why server-rendered Thymeleaf and not an SPA? **[WARM]**
+
+Content-heavy, SEO-relevant, low-interactivity site — server rendering is the
+default that fits, with htmx for the handful of partial updates. I also expose
+a small read-only JSON API over the same service layer, which is what future
+mobile clients or third parties would use. Chosen per use case, not by
+fashion.
+
+### Q: Why is Testcontainers justified here and not just fashionable? **[WARM]**
+
+The full-text search query cannot be tested against H2 — `tsvector`,
+`to_tsvector`, GIN indexes and `pg_trgm` do not exist there. Testing repository
+queries against a different database than production tests the wrong thing. One
+singleton container is reused across the whole suite so CI time stays sane.
+
+### Q: What does "one singleton container" actually take? **[DEEP]**
+
+More than it sounds. A container returned from a `@Bean` method is created per
+application context, and Spring caches one context per distinct test
+configuration — `@SpringBootTest` and `@DataJpaTest` are two different ones — so
+the naive version starts Postgres once per slice and pays its startup cost each
+time. The container has to be a `static` field, started once per JVM, with the
+`@Bean` method returning that instance.
+
+Nothing stops it, deliberately: Testcontainers' Ryuk sidecar removes the
+container when the JVM exits, so there is no close() to get wrong. I check it by
+counting `Creating container for image` in the build log — one line, across
+three context configurations.
+
+Two things that cost me time and are worth knowing: the configuration class has
+to be `public`, because Initializr generates it package-private and `@Import`
+cannot reach a package-private class from a repository test in a feature
+package; and in Testcontainers 2.x `PostgreSQLContainer` is no longer generic,
+so every `PostgreSQLContainer<?>` you find online fails to compile.
+
+---
+
+## 12. Things to be able to demonstrate, not just describe
+
+- The N+1 fix with a measured before/after query count from
+  `hibernate.generate_statistics`.
+- The duplicate-URL path: normalized URL, unique constraint,
+  `DataIntegrityViolationException` caught by constraint name, friendly page
+  instead of a 500.
+- The deletion integration test: create a poster with actions, images, reports
+  and subscriptions, delete, assert every table is empty.
+- The digest matching rules as fast unit tests with no database.
+- `ddl-auto=validate` failing to notice a length mismatch, in four lines.
+
+---
+
+## 13. Queries, pagination and schema change
+
+### Q: Why `EXISTS` instead of a join against the category/region tables? **[COLD]**
+
+A join doesn't filter rows, it pairs them: one parent row times N matching
+child rows. An action tagged `BURGAS` and `NATIONAL`, matched against a
+subscriber who follows both, comes back twice; add the category join and it
+comes back four times. `EXISTS` asks a yes/no question about related rows
+instead of combining them, so the result is one row per action.
+
+Postgres plans `EXISTS` as a **semi-join**: it stops at the first matching
+child row rather than finding all of them. With `LIMIT 20` on a digest query
+that difference compounds.
+
+### Q: Why not just add `DISTINCT`? **[WARM]**
+
+It works and it's what most people reach for, but it creates duplicates and
+then pays to remove them, it masks the multiplication rather than preventing
+it, and it breaks counting — `count(*)` over the joined rows returns 4 where
+there is 1 action, so pagination reports the wrong total. In JPA it is worse:
+a collection fetch join combined with `firstResult`/`maxResults` triggers
+`HHH000104`, where Hibernate loads every matching row into memory and
+paginates there.
+
+Related trap: `IN (subquery)` is usually planned the same as `EXISTS`, but
+`NOT IN` returns nothing at all if the subquery yields a single NULL. Use
+`NOT EXISTS`.
+
+### Q: How does offset pagination break, and what's the alternative? **[DEEP]**
+
+`LIMIT 20 OFFSET 40` asks the database to produce the full ordered result,
+discard 40 rows, and return the next 20. Two failure modes:
+
+1. **Ambiguous ordering.** With ties in `ORDER BY published_at DESC` the order
+   among equal rows is undefined between queries, so a row can appear on page 1
+   and again on page 2, while another is never shown. Fixed by a unique
+   tiebreaker: `ORDER BY published_at DESC, id DESC`.
+2. **Deep offsets are slow.** `OFFSET 10000` still generates and throws away
+   10,000 rows.
+
+Keyset (cursor) pagination fixes both: instead of an offset, carry the last
+row's sort key — `WHERE (published_at, id) < (:lastPublishedAt, :lastId)
+ORDER BY published_at DESC, id DESC LIMIT 20`. It uses the index directly and
+is stable while rows are inserted. The trade-off is no "jump to page 7".
+
+### Q: How do you change a schema in production without downtime? **[DEEP]**
+
+Expand/contract, in three phases, because during a rolling deploy the old and
+new application versions run against the same database at the same time:
+
+- **Expand** — add the new structure in a backwards-compatible way: a nullable
+  column, or a new table. Old code ignores it.
+- **Migrate** — deploy code that writes both old and new, backfill existing
+  rows in batches, then switch reads to the new structure.
+- **Contract** — once nothing reads the old structure, drop it in a later
+  migration.
+
+A rename becomes: add `new_col`, dual-write, backfill, switch reads, drop
+`old_col`. Postgres specifics worth naming: `ADD COLUMN` with a default is
+metadata-only since version 11; adding `NOT NULL` or a `CHECK` scans the table
+and takes a strong lock, so add the constraint `NOT VALID` first and
+`VALIDATE CONSTRAINT` afterwards, which takes a weaker lock.
+
+### Q: Is DDL transactional? **[WARM]**
+
+In Postgres, yes — `CREATE TABLE`, `ALTER TABLE`, `CREATE INDEX` all roll back.
+Flyway wraps each migration in a transaction, so a file with eleven statements
+either applies completely or not at all; a typo in the last one leaves nothing
+behind and nothing recorded in `flyway_schema_history`. On MySQL and Oracle
+each DDL statement implicitly commits, which is why half-applied migrations are
+a normal hazard there and not here.
+
+Exceptions that cannot run inside a transaction block: `CREATE INDEX
+CONCURRENTLY`, `CREATE DATABASE`, `VACUUM`, `ALTER SYSTEM`. Flyway handles them
+with `-- executeInTransaction=false`.
+
+The related operational concern is locking: DDL takes an `ACCESS EXCLUSIVE`
+lock, so an `ALTER TABLE` queues behind running queries and everything else
+queues behind it. `SET lock_timeout` before DDL turns a potential outage into a
+failed migration you can retry.
+
+---
+
+## 14. Stack choices
+
+### Q: Why Spring Boot 4 rather than 3? **[WARM]**
+
+The project started after Boot 3's open-source support window closed, and
+Initializr no longer offers 3.x. Boot 4 brings Spring Framework 7, Spring
+Security 7, Hibernate 7, Jackson 3 and a Jakarta EE 11 / Servlet 6.1 baseline,
+with modular starters (`spring-boot-starter-webmvc` rather than `-web`). The
+real cost is ecosystem lag: most tutorials and snippets online are written for
+3.x, so security and persistence configuration has to come from the official
+documentation rather than blog posts.
+
+Concretely, the things that have already cost me time: `@DataJpaTest` moved to
+`org.springframework.boot.data.jpa.test.autoconfigure`; the umbrella
+`spring-boot-starter-test` is replaced by per-slice starters
+(`-data-jpa-test`, `-webmvc-test`, `-security-test`), which is where Mockito and
+AssertJ now come from; the test stack is **JUnit 6**, not 5; and
+`spring-boot-starter-validation` still has to be added by hand, because the web
+starter has not included Bean Validation since Boot 2.3.
+
+### Q: You pinned PostgreSQL 17. Why not 18? **[DEEP]**
+
+Because the deployed version decides, and Railway's official image is 16 with 17
+available — 18 exists there only as community forks of their 17 image. Running
+locally on a major version the host cannot give me means a `pg_dump` I cannot
+restore and behaviour I have not actually tested. Nothing in my schema needs
+anything newer: identity columns are Postgres 10+, stored generated columns 12+,
+`pg_trgm` and GIN much older. So matching the platform costs nothing.
+
+Two version-coupled traps worth naming, both specific to 18. It changed the
+default for generated columns to `VIRTUAL`, and a virtual column cannot be
+indexed — so `GENERATED ALWAYS AS (...)` without `STORED` would make my
+`CREATE INDEX ... USING gin (search_vector)` fail on 18 and work on 17. I write
+`STORED` explicitly, which is mandatory on 17 and earlier anyway, so the file is
+portable across 15–18; I confirmed it by applying the migration to 17 and
+reading `pg_attribute.attgenerated`. And 18 moved the image's declared data
+volume from `/var/lib/postgresql/data` up to `/var/lib/postgresql`, so the
+Compose mount path is tied to the image tag.
+
+### Q: Why Java 21 and not 17 or 25? **[WARM]**
+
+Boot 4's baseline is 17 and it supports 25, but 21 is the LTS most job adverts
+target, and it carries records, pattern matching, sealed types and virtual
+threads. Choosing 17 would give up language features for no benefit; 25 is
+defensible but buys nothing this project needs.
+
+### Q: Maven or Gradle? **[WARM]**
+
+Maven, because its lifecycle and dependency model are what most teams I'd be
+joining use, and its configuration is explicit. Gradle is faster and nicer to
+write; the deciding factor was familiarity for whoever inherits the project.
+
+### Q: YAML or properties? **[WARM]**
+
+`application.yml` for configuration: profiles in one file via
+`spring.config.activate.on-profile`, no repeated key prefixes, readable lists.
+Message bundles stay `.properties` because that is the `MessageSource` format,
+not a Spring configuration choice.
+
+---
+
+## 15. Moderation, abuse and operational limits
+
+### Q: Walk me through what happens when someone submits a link that is already on the platform. **[COLD]**
+
+The URL is normalized first — lowercase host, `www.` stripped, `utm_*` and
+`fbclid` parameters removed, trailing slash and fragment removed — so that two
+spellings of the same link compare equal. The raw URL is kept for display; the
+normalized one is what the uniqueness rule uses.
+
+Then two things, both of which have to exist:
+
+1. The service looks the normalized URL up before inserting. If it finds a row,
+   the poster gets an inline message on the form — "this action is already on
+   the platform" — with a link to it. Nothing is written.
+2. The insert can still fail on `uq_action_normalized_url`. I catch
+   `DataIntegrityViolationException`, identify the constraint **by name**, and
+   show the same message instead of a 500.
+
+A duplicate never becomes a row. It is not stored as a `REJECTED` action,
+because that would fill the table with garbage and the moderation queue with
+noise.
+
+### Q: Why both? Isn't the lookup enough? **[COLD]**
+
+Because the lookup and the insert are two separate statements — a check-then-act
+race. Two posters submitting the same link in the same second both pass the
+lookup, and only the unique constraint stops the second one. The database is
+the only place a uniqueness rule can actually be enforced; the lookup exists
+purely to produce a better error message in the common case.
+
+The same reasoning applies to the URL being optional. Both URL columns are
+nullable and paired by a `CHECK`, and Postgres treats NULLs as distinct inside
+a `UNIQUE` constraint, so any number of link-less actions coexist with no
+special case in the code.
+
+### Q: You have four action statuses. Why not a separate HIDDEN state for admin takedowns? **[WARM]**
+
+I had one, and removed it. It existed only because the state graph used to be
+one-way: `HIDDEN` meant "an admin took this down", as distinct from
+`WITHDRAWN`, which is the poster's own reversible choice. Once I allowed an
+admin to move an action from `PUBLISHED` back to `REJECTED`, `REJECTED` *is*
+the takedown state and `HIDDEN` was a second name for the same fact. Two names
+for one fact is how states drift apart.
+
+Restoration is a status change, never delete-and-recreate: the action keeps its
+id, so shared links and digest links keep working, and the poster retypes
+nothing.
+
+### Q: A poster you trusted starts publishing spam. What stops them? **[WARM]**
+
+Three things, in order. A quota of ten submissions per user per rolling 24
+hours, enforced in the service as a `COUNT` over `created_at` — that bounds the
+damage before anyone notices. An admin ban, which disables the account *and*
+moves its published actions to `REJECTED`, because `enabled = false` on its own
+only stops login and would leave the spam live. And the fact that promotion to
+`POSTER` is granted by hand in the first place; the three-approved-actions rule
+is a floor the admin has to clear, not an automatic trigger.
+
+The quota is a database count rather than an in-memory rate limiter because the
+limit is per account rather than per IP, and it has to survive a restart.
+
+### Q: Why is the ban a loop rather than a bulk update? **[WARM]**
+
+The number of actions per user is small and bounded by the quota, so I load
+them and set the status on each one. Dirty checking writes the UPDATEs and
+maintains `updated_at` for free, and there is no stale-persistence-context
+trap. The bulk `@Modifying` form is faster but skips `@UpdateTimestamp` and can
+be silently undone by entities already loaded in the session, so it needs
+`updated_at` written into the query by hand and `clearAutomatically = true`. I
+would switch to it at thousands of rows, not at fifty.
+
+### Q: Can someone take the site down by submitting things that fail? **[DEEP]**
+
+Not realistically through the duplicate path. Submitting requires a logged-in,
+email-verified account, so an attacker needs a real mailbox first, and a
+refused duplicate costs one indexed lookup and a rolled-back transaction. It
+does not even consume the daily quota, because that counts rows and no row is
+created.
+
+The expensive endpoint is the image upload: re-encoding a 2 MB file to strip
+EXIF is real CPU and heap on a small container. The mitigations are cheap and
+ordered — `spring.servlet.multipart.max-file-size` rejects oversized bodies
+before any of my code runs, content sniffing and the cheap validations run
+before the re-encode, and Cloudflare sits in front for volumetric floods.
+
+The resource that actually runs out first is the connection pool, not CPU:
+every request that touches the database holds a HikariCP connection, and
+Postgres has its own connection ceiling. That is the number I would watch.
+
+---
+
+## 16. A bug of mine worth telling
+
+### Q: Tell me about a bug you caused and how you found it. **[WARM]**
+
+`AppUserRepository` had no `package` declaration — the file opened straight on
+an `import`. Java has no requirement that a source file's directory match its
+package, so it compiled, silently, into the default package.
+
+Three consequences, in the order they would have surfaced. Spring's component
+scan starts at the `@SpringBootApplication` package, and the default package is
+not below it, so the repository was never registered as a bean — no error, it
+simply did not exist. A class in the default package cannot be imported from any
+named package, so the first service to use it would have failed to compile with
+a "cannot find symbol" on a file sitting right there. And the test suite was
+green the whole time, because the only test was `contextLoads` and nothing ever
+asked Spring for the bean.
+
+I found it by looking at `target/classes` rather than at the source: the class
+file was at the root instead of under `com/fivegoodmins/fivegoodmins/user/`.
+
+What I changed is the part I would actually want to be asked about: a passing
+test suite that cannot distinguish "this works" from "this was never executed"
+is not a test suite. The repository now has a `@DataJpaTest` that exercises both
+of its query methods against a real PostgreSQL, so the bean's absence would fail
+the build.
