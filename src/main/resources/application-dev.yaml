@@ -1,0 +1,11 @@
+# Local development only. Activated by spring-boot:run through the Maven
+# plugin's <profiles> configuration, so it is never active in a container: the
+# packaged jar starts with no profile and must be given its datasource by the
+# environment.
+#
+# Matches the credentials in compose.yaml.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/fivegoodmins
+    username: app
+    password: app

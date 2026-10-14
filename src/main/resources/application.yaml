@@ -1,7 +1,5 @@
-# Railway assigns the port at runtime and expects the process to bind it; 8080
-# locally. Everything else here is a local-development default that an
-# environment variable overrides through Spring's relaxed binding, so no host
-# needs a code change (ADR-004).
+# The host assigns the port at runtime and expects the process to bind it; 8080
+# locally.
 server:
   port: ${PORT:8080}
 
@@ -9,14 +7,20 @@ spring:
   application:
     name: fivegoodmins
 
-  datasource:
-    url: jdbc:postgresql://localhost:5432/fivegoodmins
-    username: app
-    password: app
+  # No datasource here on purpose. A committed localhost default made a missing
+  # SPRING_DATASOURCE_URL in production look like a dead database -- "Connection
+  # to localhost:5432 refused" names the wrong problem, and cost two deploys to
+  # diagnose. With nothing here, the same mistake fails at startup with
+  # "Failed to configure a DataSource: 'url' attribute is not specified", which
+  # names the actual one.
+  #
+  # Production supplies SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD as
+  # environment variables. Local runs get them from application-dev.yaml, which
+  # spring-boot:run activates via the plugin's <profiles> configuration.
+  # Repository tests get them from Testcontainers' @ServiceConnection.
   jpa:
     open-in-view: false
     hibernate:
       ddl-auto: validate
     properties:
       hibernate.jdbc.time_zone: UTC
-
