@@ -22,15 +22,15 @@ import org.testcontainers.utility.DockerImageName;
  * PostgreSQLContainer is not generic in Testcontainers 2.x -- the <SELF> self
  * type that every 1.x example writes as PostgreSQLContainer<?> was removed.
  *
- * The image tag must match the deployed major version (ADR-004/018). Railway's
- * official Postgres is 16/17; verify with SELECT version() and change both this
- * line and compose.yaml together.
+ * The image tag must match the deployed major version (ADR-004/018). Railway
+ * provisions 18; verify with SELECT version() and change both this line and
+ * compose.yaml together.
  */
 @TestConfiguration(proxyBeanMethods = false)
 public class TestcontainersConfiguration {
 
     private static final PostgreSQLContainer POSTGRES =
-            new PostgreSQLContainer(DockerImageName.parse("postgres:17"));
+            new PostgreSQLContainer(DockerImageName.parse("postgres:18"));
 
     static {
         POSTGRES.start();
