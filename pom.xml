@@ -11,9 +11,9 @@
 	<groupId>com.fivegoodmins</groupId>
 	<artifactId>fivegoodmins</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<name/>
-	<description/>
-	<url/>
+	<name>fivegoodmins</name>
+	<description>A directory of small activism actions, with a daily email digest</description>
+	<url>https://5goodmins.com</url>
 	<licenses>
 		<license>
 			<name>PolyForm Noncommercial License 1.0.0</name>
@@ -22,13 +22,12 @@
 		</license>
 	</licenses>
 	<developers>
-		<developer/>
+		<developer>
+			<name>Georgi Spasov</name>
+		</developer>
 	</developers>
 	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
+		<url>https://github.com/geuorgi-spasov/5goodmins</url>
 	</scm>
 	<properties>
 		<java.version>21</java.version>
@@ -53,6 +52,10 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.flywaydb</groupId>
@@ -123,6 +126,10 @@
 	</dependencies>
 
 	<build>
+		<!-- A fixed artifact name, so the Dockerfile names the jar instead of
+		     globbing target/*.jar and silently breaking the day a second jar
+		     appears there. -->
+		<finalName>app</finalName>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
