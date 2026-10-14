@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ---------------------------------------------------------------------------
 # Stage 1 — build the jar
 # ---------------------------------------------------------------------------
@@ -7,20 +5,27 @@ FROM eclipse-temurin:21-jdk AS build
 
 WORKDIR /build
 
-# sharing=locked, not the default sharing=shared: a cache mount is one
-# directory handed to every build at once, and Maven's local repository is not
-# safe for concurrent writes. Two pushes close together can leave a
-# half-written artifact and a corrupt-jar failure that will not reproduce.
+# The POM on its own first, so the dependency download below lands in an image
+# layer keyed only on the POM. Editing a Java file reuses that layer instead of
+# re-fetching the tree.
+#
+# No BuildKit cache mount. Railway's builder is not BuildKit -- it has its own
+# Dockerfile parser, which rejected `--mount=type=cache` outright ("missing an
+# id argument"). Even with an id it would not have helped there: a cache mount
+# lives on the build machine and Railway's builders are throwaway, while the
+# jars it holds never reach an image layer, so nothing carries over. Plain
+# layer caching works on every builder, which is the property that matters for
+# the one that deploys this.
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
-RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -B dependency:go-offline
+RUN ./mvnw -B dependency:go-offline
 
 COPY src/ src/
 
 # Tests are skipped here on purpose: they use Testcontainers, which needs a
 # Docker daemon, and there is none inside a Docker build. The full suite runs
 # in GitHub Actions (./mvnw verify); only a green build should deploy.
-RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -B -DskipTests package
+RUN ./mvnw -B -DskipTests package
 
 # target/app.jar, not target/*.jar: the POM pins <finalName>, so there is no
 # glob to match a second jar the day a sources or javadoc plugin is added.
