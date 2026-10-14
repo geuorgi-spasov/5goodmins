@@ -1,3 +1,10 @@
+# Railway assigns the port at runtime and expects the process to bind it; 8080
+# locally. Everything else here is a local-development default that an
+# environment variable overrides through Spring's relaxed binding, so no host
+# needs a code change (ADR-004).
+server:
+  port: ${PORT:8080}
+
 spring:
   application:
     name: fivegoodmins
