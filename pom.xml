@@ -126,6 +126,10 @@
 	</dependencies>
 
 	<build>
+		<!-- A fixed artifact name, so the Dockerfile names the jar instead of
+		     globbing target/*.jar and silently breaking the day a second jar
+		     appears there. -->
+		<finalName>app</finalName>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>

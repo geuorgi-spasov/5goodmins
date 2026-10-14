@@ -7,26 +7,24 @@ FROM eclipse-temurin:21-jdk AS build
 
 WORKDIR /build
 
-# The Maven wrapper and the POM first, on their own, so that the dependency
-# download below lands in a Docker layer keyed only on the POM. Editing a Java
-# file then reuses that layer instead of re-downloading ~60MB of artifacts.
+# sharing=locked, not the default sharing=shared: a cache mount is one
+# directory handed to every build at once, and Maven's local repository is not
+# safe for concurrent writes. Two pushes close together can leave a
+# half-written artifact and a corrupt-jar failure that will not reproduce.
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
-RUN ./mvnw -B dependency:go-offline
+RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -B dependency:go-offline
 
-# Sources last, because they change on every commit and invalidate every layer
-# after them.
 COPY src/ src/
 
-# Tests are skipped deliberately: they need Docker (Testcontainers), and this
-# build runs *inside* a container with no Docker socket. CI runs ./mvnw verify
-# on every push, which is the right place for it.
-RUN ./mvnw -B -DskipTests package
+# Tests are skipped here on purpose: they use Testcontainers, which needs a
+# Docker daemon, and there is none inside a Docker build. The full suite runs
+# in GitHub Actions (./mvnw verify); only a green build should deploy.
+RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -B -DskipTests package
 
-# Explode the fat jar so its contents can be copied as separate Docker layers
-# below. --launcher keeps Spring Boot's own loader, so the runtime entry point
-# is JarLauncher rather than a hand-built classpath.
-RUN java -Djarmode=tools -jar target/*.jar extract --launcher --destination extracted
+# target/app.jar, not target/*.jar: the POM pins <finalName>, so there is no
+# glob to match a second jar the day a sources or javadoc plugin is added.
+RUN java -Djarmode=tools -jar target/app.jar extract --launcher --destination extracted
 
 # ---------------------------------------------------------------------------
 # Stage 2 — run it
@@ -35,34 +33,30 @@ FROM eclipse-temurin:21-jre
 
 WORKDIR /app
 
-# A system account with no login shell and no home directory. The JVM needs
-# neither, and a process that is not root cannot rewrite the application it is
-# running if it is ever compromised. /app is chowned before the switch, because
-# a directory created by WORKDIR belongs to root.
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin spring \
     && chown spring:spring /app
 USER spring
 
-# Four copies rather than one, ordered from least to most likely to change.
-# Each is its own layer, so a deploy that only touches application code pushes
-# and pulls kilobytes instead of the whole 57MB jar.
-COPY --from=build --chown=spring:spring /build/extracted/BOOT-INF/lib     BOOT-INF/lib
-COPY --from=build --chown=spring:spring /build/extracted/org              org
-COPY --from=build --chown=spring:spring /build/extracted/META-INF         META-INF
-COPY --from=build --chown=spring:spring /build/extracted/BOOT-INF/classes BOOT-INF/classes
+COPY --from=build --chown=spring:spring /build/extracted/BOOT-INF/lib           BOOT-INF/lib
+COPY --from=build --chown=spring:spring /build/extracted/org                    org
+COPY --from=build --chown=spring:spring /build/extracted/META-INF               META-INF
+COPY --from=build --chown=spring:spring /build/extracted/BOOT-INF/classes       BOOT-INF/classes
+COPY --from=build --chown=spring:spring /build/extracted/BOOT-INF/classpath.idx BOOT-INF/classpath.idx
 
-# Documentation only -- it publishes nothing by itself. The real port comes from
-# server.port=${PORT:8080}, which Railway sets.
 EXPOSE 8080
 
-# MaxRAMPercentage because the JVM's default is 25% of the container limit: on a
-# 512MB Railway instance that is a 128MB heap, three quarters of the memory paid
-# for sitting unused. ExitOnOutOfMemoryError so the orchestrator restarts a dead
-# JVM instead of leaving it to thrash.
-ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+# Absolute cap, not MaxRAMPercentage: Railway bills per GB-second, and a heap
+# sized as a percentage of the container limit grows to fill it and never
+# shrinks. Raise only if the memory graph actually says so.
+#
+# -Xms128m rather than 256m because the app idles most of the time and the
+# initial size only affects the first seconds of heap resizing. The opposite
+# convention -- Xms equal to Xmx -- is the right one when predictability
+# matters more than footprint; here footprint is what is being billed.
+#
+# -Xmx512m is the heap only. Metaspace, code cache, thread stacks and direct
+# buffers sit outside it, so expect roughly 650-750MB resident. Any memory
+# limit set on the service belongs there, not at 512.
+ENV JAVA_TOOL_OPTIONS="-Xms128m -Xmx512m -XX:+ExitOnOutOfMemoryError"
 
-# exec form (a JSON array), not shell form. Shell form wraps the process in
-# /bin/sh, which does not forward SIGTERM, so the JVM would never get its
-# shutdown hook and the container would be SIGKILLed after the grace period --
-# dropping in-flight requests and the connection pool's clean shutdown.
 ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]
