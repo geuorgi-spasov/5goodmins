@@ -1,0 +1,78 @@
+name: CI
+
+# push on main + pull_request, and no branch filter on the PR trigger. A push
+# to a feature branch does not match, so a pull request from this repository
+# runs the workflow once rather than twice.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Superseded runs are pointless: a second push to the same branch cancels the
+# first instead of queueing behind it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege. The default token can write to the repository; nothing here
+# needs to, so it reads only.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and test
+    runs-on: ubuntu-latest
+    # A hung Testcontainers start would otherwise sit there for six hours.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          # Caches ~/.m2 keyed on the POM. Takes the run from minutes to under
+          # one, and unlike the Dockerfile's BuildKit cache mount it really
+          # does persist between runs, because GitHub stores it for us.
+          cache: maven
+
+      # The whole suite, including the repository tests. ubuntu-latest has a
+      # working Docker daemon, so Testcontainers starts its own PostgreSQL and
+      # no `services:` block is needed. This is the quality gate the Dockerfile
+      # skips tests in favour of.
+      - name: Build and test
+        run: ./mvnw -B --no-transfer-progress clean verify
+
+      # Only on failure, and only the reports: enough to see which assertion
+      # broke without downloading the build output.
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Deliberately a separate job, running in parallel: a broken Dockerfile
+    # should fail the pull request on its own merits, and it is the only check
+    # the deployment depends on. It rebuilds the jar inside the image rather
+    # than reusing the one above, which is the honest way to test the file
+    # Railway will actually use.
+    steps:
+      - uses: actions/checkout@v4
+
+      # Plain docker build rather than docker/build-push-action: Docker on the
+      # runner is recent enough that BuildKit is the default, so the syntax
+      # directive and the cache mounts work with no extra action to pin or
+      # explain. The cost is no layer cache between runs -- acceptable for a
+      # sanity check, and the dependency download would not be cached anyway,
+      # because the cache mount keeps those jars out of the image layers.
+      - name: Build image
+        run: docker build -t fivegoodmins:${{ github.sha }} .
