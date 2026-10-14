@@ -16,7 +16,7 @@ Work in progress.
 - Java 21
 - Spring Boot 4.1 (Web MVC, Data JPA, Security, Validation)
 - Thymeleaf + htmx for the pages
-- PostgreSQL 17 — pinned to match the deployed major version
+- PostgreSQL 18 — pinned to match the deployed major version
 - Flyway for migrations
 - Maven
 - JUnit 6 (what Spring Boot 4.1 ships), Mockito, AssertJ, Testcontainers

@@ -1,11 +1,11 @@
 # The Postgres major version must match the deployed one (ADR-004/018): a
 # pg_dump taken from a newer server cannot be restored into an older one, and
-# behaviour that only exists locally is behaviour you have not tested. Railway's
-# official image is 16/17 -- run SELECT version() there and keep this tag, the
-# tag in TestcontainersConfiguration, and Railway in agreement.
+# behaviour that only exists locally is behaviour you have not tested. Railway
+# provisions 18, so this is 18 -- keep this tag, the tag in
+# TestcontainersConfiguration, and Railway in agreement.
 services:
   db:
-    image: postgres:17
+    image: postgres:18
     environment:
       POSTGRES_DB: fivegoodmins
       POSTGRES_USER: app
@@ -13,10 +13,11 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      # /var/lib/postgresql/data is PGDATA on 17 and earlier. Postgres 18 moved
-      # the image's declared volume up to /var/lib/postgresql, so this path is
-      # tied to the tag above and both change together.
-      - pgdata:/var/lib/postgresql/data
+      # Postgres 18 moved the image's declared volume up to
+      # /var/lib/postgresql; on 17 and earlier PGDATA was
+      # /var/lib/postgresql/data. The path is tied to the tag above and both
+      # change together.
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d fivegoodmins"]
       interval: 5s
