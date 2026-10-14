@@ -1,0 +1,14 @@
+# Everything here would otherwise be uploaded to the build daemon on every
+# build. target/ alone is ~60MB and is rebuilt inside the image anyway.
+target/
+.git/
+.github/
+.idea/
+*.iml
+*.iws
+*.ipr
+.env
+.env.*
+docs/
+*.md
+compose.yaml

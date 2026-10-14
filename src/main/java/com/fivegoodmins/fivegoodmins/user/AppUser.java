@@ -13,114 +13,14 @@ public class AppUser {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, length = 254, unique = true)
+    @Column(nullable = false, length = 254)
     private String email;
+    // Uniqueness is uq_app_user_email in the Flyway migration. unique = true
+    // here would be DDL-generation metadata only -- ddl-auto=validate never
+    // reads it -- so stating it would imply Hibernate enforces something it
+    // does not.
 
-    public Long getId() {
-        return id;
-    }
-
-    public String getEmail() {
-        return email;
-    }
-
-    public void setEmail(String email) {
-        this.email = email;
-    }
-
-    public String getDisplayName() {
-        return displayName;
-    }
-
-    public void setDisplayName(String displayName) {
-        this.displayName = displayName;
-    }
-
-    public String getPasswordHash() {
-        return passwordHash;
-    }
-
-    public void setPasswordHash(String passwordHash) {
-        this.passwordHash = passwordHash;
-    }
-
-    public String getWebsiteUrl() {
-        return websiteUrl;
-    }
-
-    public void setWebsiteUrl(String websiteUrl) {
-        this.websiteUrl = websiteUrl;
-    }
-
-    public String getBio() {
-        return bio;
-    }
-
-    public void setBio(String bio) {
-        this.bio = bio;
-    }
-
-    public Role getRole() {
-        return role;
-    }
-
-    public void setRole(Role role) {
-        this.role = role;
-    }
-
-    public boolean isEnabled() {
-        return enabled;
-    }
-
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-    }
-
-    public Instant getEmailVerifiedAt() {
-        return emailVerifiedAt;
-    }
-
-    public void setEmailVerifiedAt(Instant emailVerifiedAt) {
-        this.emailVerifiedAt = emailVerifiedAt;
-    }
-
-    public Instant getPosterVerifiedAt() {
-        return posterVerifiedAt;
-    }
-
-    public void setPosterVerifiedAt(Instant posterVerifiedAt) {
-        this.posterVerifiedAt = posterVerifiedAt;
-    }
-
-    public Instant getLastDigestSentAt() {
-        return lastDigestSentAt;
-    }
-
-    public void setLastDigestSentAt(Instant lastDigestSentAt) {
-        this.lastDigestSentAt = lastDigestSentAt;
-    }
-
-    public String getLocale() {
-        return locale;
-    }
-
-    public void setLocale(String locale) {
-        this.locale = locale;
-    }
-
-    public Instant getCreatedAt() {
-        return createdAt;
-    }
-
-    public Instant getUpdatedAt() {
-        return updatedAt;
-    }
-
-    public void setUpdatedAt(Instant updatedAt) {
-        this.updatedAt = updatedAt;
-    }
-
-    @Column(name = "password_hash", nullable = false, length = 100)
+    @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
 
     @Column(name = "display_name", nullable = false, length = 80)
@@ -161,11 +61,21 @@ public class AppUser {
 
     protected AppUser() { }   // required by JPA, not for your code
 
-    public AppUser(String email, String passwordHash, String displayName) {
+    /**
+     * @param email   already lowercased and trimmed by the caller; the database
+     *                verifies it with ck_app_user_email_lowercase rather than
+     *                converting it (the application normalizes, the database
+     *                verifies).
+     * @param now     the digest watermark's starting point, so the first digest
+     *                contains only actions published after the account existed
+     *                (ADR-005). Passed in rather than read from Instant.now()
+     *                so a test can inject a fixed Clock.
+     */
+    public AppUser(String email, String passwordHash, String displayName, Instant now) {
         this.email = email;
         this.passwordHash = passwordHash;
         this.displayName = displayName;
-        this.lastDigestSentAt = Instant.now();
+        this.lastDigestSentAt = now;
     }
 
     @Override
@@ -186,7 +96,106 @@ public class AppUser {
         if (emailVerifiedAt == null) this.emailVerifiedAt = now;
     }
 
-    // getters; setters only for fields that are genuinely edited
-    // (displayName, bio, websiteUrl, locale, passwordHash, enabled, role, lastDigestSentAt)
-    // no setId, no setCreatedAt
+    // -----------------------------------------------------------------------
+    // Accessors. No setId (the database assigns it), no setCreatedAt or
+    // setUpdatedAt: @CreationTimestamp / @UpdateTimestamp own those columns and
+    // overwrite anything a setter wrote at flush time.
+    // -----------------------------------------------------------------------
+
+    public Long getId() {
+        return id;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    /** The caller lowercases and trims; see the constructor. */
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getPasswordHash() {
+        return passwordHash;
+    }
+
+    public void setPasswordHash(String passwordHash) {
+        this.passwordHash = passwordHash;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public void setDisplayName(String displayName) {
+        this.displayName = displayName;
+    }
+
+    public String getBio() {
+        return bio;
+    }
+
+    public void setBio(String bio) {
+        this.bio = bio;
+    }
+
+    public String getWebsiteUrl() {
+        return websiteUrl;
+    }
+
+    public void setWebsiteUrl(String websiteUrl) {
+        this.websiteUrl = websiteUrl;
+    }
+
+    public Role getRole() {
+        return role;
+    }
+
+    public void setRole(Role role) {
+        this.role = role;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
+
+    public Instant getEmailVerifiedAt() {
+        return emailVerifiedAt;
+    }
+
+    public Instant getPosterVerifiedAt() {
+        return posterVerifiedAt;
+    }
+
+    public void setPosterVerifiedAt(Instant posterVerifiedAt) {
+        this.posterVerifiedAt = posterVerifiedAt;
+    }
+
+    public Instant getLastDigestSentAt() {
+        return lastDigestSentAt;
+    }
+
+    public void setLastDigestSentAt(Instant lastDigestSentAt) {
+        this.lastDigestSentAt = lastDigestSentAt;
+    }
+
+    public String getLocale() {
+        return locale;
+    }
+
+    public void setLocale(String locale) {
+        this.locale = locale;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
 }
