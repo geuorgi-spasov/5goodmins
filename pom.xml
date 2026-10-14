@@ -134,6 +134,13 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<!-- Applies to spring-boot:run only, not to the repackaged
+					     jar, so a local run gets application-dev.yaml while a
+					     container starts with no profile and must be given its
+					     datasource by the environment. -->
+					<profiles>dev</profiles>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>
