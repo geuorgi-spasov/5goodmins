@@ -793,24 +793,33 @@ AssertJ now come from; the test stack is **JUnit 6**, not 5; and
 `spring-boot-starter-validation` still has to be added by hand, because the web
 starter has not included Bean Validation since Boot 2.3.
 
-### Q: You pinned PostgreSQL 17. Why not 18? **[DEEP]**
+### Q: Which PostgreSQL version, and how did you choose it? **[DEEP]**
 
-Because the deployed version decides, and Railway's official image is 16 with 17
-available — 18 exists there only as community forks of their 17 image. Running
-locally on a major version the host cannot give me means a `pg_dump` I cannot
-restore and behaviour I have not actually tested. Nothing in my schema needs
-anything newer: identity columns are Postgres 10+, stored generated columns 12+,
-`pg_trgm` and GIN much older. So matching the platform costs nothing.
+18, because that is what the host provisions. The deployed version decides and
+nothing else does: developing on a major version the host cannot give back means
+a `pg_dump` that will not restore and behaviour nobody has tested. So
+`compose.yaml`, the Testcontainers image tag and the Railway database all say 18,
+and they move together. Nothing in my schema needs anything that new — identity
+columns are Postgres 10+, stored generated columns 12+, `pg_trgm` and GIN far
+older — which is exactly why matching the platform costs nothing.
 
-Two version-coupled traps worth naming, both specific to 18. It changed the
-default for generated columns to `VIRTUAL`, and a virtual column cannot be
-indexed — so `GENERATED ALWAYS AS (...)` without `STORED` would make my
-`CREATE INDEX ... USING gin (search_vector)` fail on 18 and work on 17. I write
-`STORED` explicitly, which is mandatory on 17 and earlier anyway, so the file is
-portable across 15–18; I confirmed it by applying the migration to 17 and
-reading `pg_attribute.attgenerated`. And 18 moved the image's declared data
-volume from `/var/lib/postgresql/data` up to `/var/lib/postgresql`, so the
-Compose mount path is tied to the image tag.
+The honest part of this answer is that I had it wrong first. An earlier revision
+pinned everything to 17 on the belief that Railway offered 16 and 17 with 18 only
+as community forks. The code moved to 18 when the deploy proved otherwise and the
+documents lagged a week behind it. The lesson I actually take from it is the
+check, not the number: `SELECT version();` against the deployed database settles
+it, and a platform's documentation or a blog post does not.
+
+Two details are coupled to that 18, and on 18 they are live, not hypothetical.
+It changed the default for generated columns to `VIRTUAL`, and a virtual column
+cannot be indexed — so `GENERATED ALWAYS AS (...)` without `STORED` makes my
+`CREATE INDEX ... USING gin (search_vector)` fail outright. The explicit `STORED`
+in `V1__` is therefore load-bearing rather than defensive, and the evidence it
+takes effect is that the full-text search tests pass against 18.6 in CI; that
+index could not exist otherwise. And 18 moved the image's declared data volume
+from `/var/lib/postgresql/data` up to `/var/lib/postgresql`, so the Compose mount
+path is tied to the image tag — get that wrong and the database silently starts
+empty on every container recreate.
 
 ### Q: Why Java 21 and not 17 or 25? **[WARM]**
 

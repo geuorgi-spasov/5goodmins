@@ -21,7 +21,7 @@ out to the platform that hosts it; the site hosts none of them.
 Portfolio project, ~9-week build, possibly a real product. Deployed to **Railway
 Hobby** (~$5/month) behind Cloudflare.
 
-**Stack:** Java 21 · Spring Boot 4.1.1 · Maven · PostgreSQL 17 · Thymeleaf +
+**Stack:** Java 21 · Spring Boot 4.1.1 · Maven · PostgreSQL 18 · Thymeleaf +
 htmx · Flyway · Spring Security 7 · Hibernate 7 · Testcontainers 2.x · JUnit 6.
 Server-rendered, session auth, one modular monolith. No microservices, no Kafka,
 no Redis, no Elasticsearch, no SPA — all explicitly rejected with reasons.
@@ -101,7 +101,13 @@ Alongside it: `.dockerignore` excludes `target/`, `.git/`, `.github/`, `.idea/`,
 
 ## 4. What was actually verified, so nothing here is guesswork
 
-The runtime stage was built and run against PostgreSQL 17.11:
+The runtime stage was built and run against PostgreSQL 17.11, which is what the
+project was pinned to at the time. It is on 18 now (ADR-004 Rev 9 — Railway
+provisions 18). The container-level checks below have **not** been repeated
+against 18; what is known on 18 is that the image builds and the whole suite
+passes against 18.6 in CI. None of these checks touches a Postgres version
+boundary, so re-running them is a formality rather than a risk — but it is
+unrun, and this list says what was measured, not what should hold.
 
 - Boots as `uid=999(spring)` — not root.
 - `/proc/1/cmdline` is `java org.springframework.boot.loader.launch.JarLauncher` — the JVM really is PID 1.

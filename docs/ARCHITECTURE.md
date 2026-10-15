@@ -1,7 +1,7 @@
 # Architecture Decisions — 5 Good Minutes (Activism Action Platform)
 
-**Revision 7** · 2026-10-11 · Status: living document
-Supersedes Rev 6. Flyway `V1__` is now written, applied against PostgreSQL 17
+**Revision 9** · 2026-10-15 · Status: living document
+Supersedes Rev 6. Flyway `V1__` is now written, applied against PostgreSQL 18
 and covered by repository tests; it is the source of truth for exact DDL — this
 document records the decisions and the reasons. Rev 7 corrects the places where
 Rev 6 disagreed with what the code actually does.
@@ -50,7 +50,7 @@ Everything Rev 1 got right is kept and marked **Accepted**. The rest is marked *
 | 16 | Action lifecycle, poster approval, abuse controls | Revised (Rev 6) |
 | 17 | Categories and action types | New (Rev 4) |
 | 18 | Build and runtime: Maven, Spring Boot 4.1.x, Java 21, YAML config | New (Rev 5) |
-| 5b | Dev mail: Mailpit behind an `EmailSender` interface; PostgreSQL pinned to 17 | Resolved (Rev 7) |
+| 5b | Dev mail: Mailpit behind an `EmailSender` interface; PostgreSQL pinned to 18 | Resolved (Rev 9) |
 
 ---
 
@@ -203,24 +203,34 @@ Total spend over a 9-week build plus a 6-month job hunt is under €100.
 
 **Local Postgres runs the same major version as Railway's.** Check with `SELECT version();` on Railway and pin the Docker image tag to match.
 
-Railway's official Postgres image is **16 by default, with 17 available**; their
-documented in-place major upgrade covers sources 14–17. **Postgres 18 exists on
-Railway only as community template forks**, which for a project whose premise is
-"I can explain every line" means owning an unmaintained image. Local, CI and
-Testcontainers are therefore pinned to **17**, and nothing in `V1__` needs
-anything newer: identity columns are Postgres 10+, stored generated columns 12+,
-`pg_trgm` and GIN far older.
+**Railway provisions PostgreSQL 18**, so local, CI and Testcontainers are
+pinned to **18** — `compose.yaml`, `TestcontainersConfiguration` and the Railway
+database all say 18, and they change together or not at all. Nothing in `V1__`
+needs anything that new: identity columns are Postgres 10+, stored generated
+columns 12+, `pg_trgm` and GIN far older. The pin is not about features, it is
+about not developing against a major version the host cannot give back: a
+`pg_dump` from a newer server will not restore into an older one, and behaviour
+that exists only locally is behaviour nobody has tested.
 
-Two version-coupled details that bite silently:
+Rev 7 of this document said the opposite — that Railway offered 16 and 17 with
+18 only as community template forks, and pinned everything to 17 on that basis.
+The premise was wrong. What settles it is the instruction two paragraphs up:
+`SELECT version();` against the deployed database. Run that, not a blog post,
+and pin to what it answers.
 
-- **Postgres 18 changed the default for generated columns to `VIRTUAL`.** A
-  virtual column cannot be indexed, so on 18 a `search_vector` declared without
-  `STORED` would make `CREATE INDEX ... USING gin (search_vector)` fail. `V1__`
-  writes `STORED` explicitly, so it behaves identically on 15 through 18 —
-  verified by applying the file to 17 and reading `pg_attribute.attgenerated`.
+Two details are coupled to that 18, and both are live facts of this setup rather
+than warnings about a version we might one day move to:
+
+- **Postgres 18 changed the default for generated columns to `VIRTUAL`,** and a
+  virtual column cannot be indexed. On 18, a `search_vector` declared without
+  `STORED` makes `CREATE INDEX ... USING gin (search_vector)` fail — so the
+  explicit `STORED` in `V1__` is load-bearing here, not belt-and-braces. The
+  evidence that it takes effect is the full-text search tests passing against
+  18.6 in CI; the index could not exist otherwise.
 - **The data volume path moved in 18.** `PGDATA` is `/var/lib/postgresql/data`
   on 17 and earlier, and the image's declared volume moved up to
-  `/var/lib/postgresql` in 18. `compose.yaml`'s mount changes with the tag.
+  `/var/lib/postgresql` in 18. `compose.yaml` mounts the 18 path; the mount and
+  the image tag change together.
 
 **Add Cloudflare in front of the domain** (free tier) once DNS is set up — TLS, caching, and a real answer to "what about DDoS" that costs nothing.
 
@@ -733,6 +743,7 @@ Full Q&A in `docs/INTERVIEW-QA.md`. The headline list:
 
 ## 8. Changelog
 
+- **Rev 9 (2026-10-15):** ADR-004 corrected: **Railway provisions PostgreSQL 18**, so local, CI and Testcontainers are pinned to 18 — this supersedes "pinned to 17" wherever Rev 7 says it. Rev 7's premise, that Railway offered only 16 and 17 and that 18 existed there as community forks, was wrong; the code had already moved to 18 and the documents had not. The decision itself never changed — match the deployed major version, checked with `SELECT version();` — only the number it resolves to. The 18 `VIRTUAL` generated-column default and the moved volume path are now live facts of the setup rather than warnings about a future upgrade, which makes the explicit `STORED` in `V1__` load-bearing; the full-text search tests passing against 18.6 in CI are the evidence it takes effect.
 - **Rev 8 (2026-10-15):** ADR-002, two gaps named rather than left implicit. The resend-verification form needs a per-address and per-IP rate limit, a cooldown and a daily cap: it has to answer identically for every address, which is what stops it being an enumeration oracle, and that same property lets it email-bomb a mailbox its user does not own. And a ban does not end a session already in progress — the banned user keeps access until it expires, which is acceptable only because the same transaction rejects their published actions, so harm to others stops at once; server-side invalidation arrives with DB-backed sessions. Neither is a change of decision; both are consequences of ADR-002's in-memory sessions and mandatory verification that the MVP accepts knowingly.
 - **Rev 7 (2026-10-11):** Written against the code rather than ahead of it, and corrected by it. ADR-016: the `POSTER` threshold counts `published_at IS NOT NULL`, not `status = 'PUBLISHED'` — current state cannot answer a historical question under a cyclic graph. ADR-013: `ddl-auto=validate` does not compare lengths, defaults or indexes either, measured rather than assumed; `@Column(length = ...)` and `unique = true` are documentation under `validate`. ADR-005: dev mail resolved as Mailpit behind an `EmailSender` interface, so the dev and production paths differ in one class. ADR-004: Railway's official Postgres is 16/17 and 18 is community-only, so everything is pinned to 17; added the Postgres 18 `VIRTUAL` generated-column default and the volume-path move as the two version-coupled traps. ADR-014: JUnit 6 not 5, the moved `@DataJpaTest` package, per-slice test starters, the non-generic `PostgreSQLContainer` of Testcontainers 2.x, and what a singleton container actually requires. Appendix A: `password_hash` 255 (Argon2 needs 105), `website_url` 500 to match the entity, `btrim` in the name and title checks. Entity invariants: no `setStatus`, `setPublishedAt`, `setId`, `setCreatedAt` or `setUpdatedAt` anywhere — state moves only through the ADR-016 transitions.
 - **Rev 6 (2026-10-02):** Written alongside the first migration, and corrected by it. ADR-016: `HIDDEN` removed (four states, not five); the admin graph `PENDING`/`PUBLISHED`/`REJECTED` is now cyclic in every direction; restoration is a status change, never delete-and-recreate; added a ten-per-day submission quota and clarified that promotion to `POSTER` is manual with the three approved actions as a floor rather than a trigger. ADR-011: the external URL is optional, both URL columns nullable and paired by a `CHECK`, the unique constraint covers every status, duplicates are refused at the form and never stored as rows, and the check-then-act race is documented. ADR-005: a restored action is not re-announced, and why re-stamping `published_at` was rejected. ADR-002: a ban disables the account *and* rejects its published actions. §2: pure join tables are exempt from the `created_at` convention. Appendix A updated to match `V1__`.

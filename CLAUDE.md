@@ -15,7 +15,7 @@ option I can justify over the clever one I would have to apologise for.
 
 ## Stack — exact versions, because the ecosystem lags
 
-Java 21 · Spring Boot **4.1.1** · Maven · PostgreSQL **17** · Thymeleaf + htmx ·
+Java 21 · Spring Boot **4.1.1** · Maven · PostgreSQL **18** · Thymeleaf + htmx ·
 Flyway · Spring Security **7** · Hibernate **7** · Testcontainers **2.x** ·
 JUnit **6**
 
