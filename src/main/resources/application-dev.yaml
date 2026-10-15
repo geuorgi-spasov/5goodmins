@@ -9,3 +9,12 @@ spring:
     url: jdbc:postgresql://localhost:5432/fivegoodmins
     username: app
     password: app
+
+# A local run is plain HTTP on localhost, and a Secure cookie is not sent over
+# it by every browser -- Safari refuses, so the session silently never sticks.
+# Off here, true in application.yaml, which is the deployed default.
+server:
+  servlet:
+    session:
+      cookie:
+        secure: false
