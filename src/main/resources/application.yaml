@@ -3,6 +3,61 @@
 server:
   port: ${PORT:8080}
 
+  # Cloudflare (proxied, Full strict) terminates TLS at the edge and forwards
+  # plain HTTP to Railway, so without this every request Tomcat sees is HTTP
+  # from a private address. Two measured consequences on the live site:
+  # Spring Security omitted Strict-Transport-Security entirely -- it writes the
+  # header only when request.isSecure() -- and Tomcat did not mark the session
+  # cookie Secure. `native` makes Tomcat's own RemoteIpValve read
+  # X-Forwarded-Proto, X-Forwarded-For and X-Forwarded-Host and present the
+  # request as what the browser actually made, which fixes both at the source
+  # rather than overriding the header conditions downstream. It also restores
+  # the real client IP, which the rate limiting on /login and /register
+  # (ADR-002) will need in order to bucket by anything other than the proxy.
+  #
+  # `native` rather than `framework`: RemoteIpValve honours an internalProxies
+  # allowlist -- loopback and the private ranges by default -- so a forwarded
+  # header arriving from somewhere else is ignored. ForwardedHeaderFilter, which
+  # `framework` installs, trusts X-Forwarded-Proto unconditionally, and a
+  # client that can reach the origin directly could then claim HTTPS.
+  #
+  # Not yet verified in production, and it is one curl to verify: that
+  # allowlist defaults to the IPv4 private ranges plus loopback, so if
+  # Railway's edge reaches the container from anything outside it -- an IPv6
+  # unique-local address, say -- the forwarded header is ignored and
+  # Strict-Transport-Security stays missing. If the live response still has no
+  # HSTS after this deploys, the fix is
+  # server.tomcat.remoteip.internal-proxies widened to the address that
+  # actually shows up in X-Forwarded-For, not a switch to `framework`.
+  forward-headers-strategy: native
+
+  # Production values for the session cookie; application-dev.yaml relaxes
+  # `secure`. These close the second half of the finding above: JSESSIONID was
+  # going out over the live site with neither flag.
+  #
+  # secure -- never sent over plain HTTP. forward-headers-strategy already
+  # earns the flag for a proxied request; stating it means the session cookie
+  # cannot leak over HTTP even if that header is ever missing, or a future host
+  # terminates TLS somewhere else. The cost is a plain-HTTP origin, which is
+  # why the dev profile turns it off: Chrome and Firefox treat
+  # http://localhost as a secure context and would keep the cookie, Safari
+  # does not.
+  #
+  # same-site lax, not strict. Strict withholds the cookie on every cross-site
+  # navigation, and the email verification link, the unsubscribe link and every
+  # link in the daily digest are exactly that (ADR-005) -- under strict a
+  # logged-in user following one arrives logged out. Lax still withholds it on
+  # cross-site POSTs, which is the half that is worth having behind the CSRF
+  # token.
+  #
+  # http-only is absent because it is already Tomcat's default for the session
+  # cookie. These two are not.
+  servlet:
+    session:
+      cookie:
+        secure: true
+        same-site: lax
+
 spring:
   application:
     name: fivegoodmins
