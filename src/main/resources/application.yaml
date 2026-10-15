@@ -29,17 +29,41 @@ server:
   # what most writing on this property still describes. Railway's proxy
   # therefore almost certainly lands inside it.
   #
-  # Still unverified on the live site, and it is one curl to verify -- against
-  # the *.up.railway.app domain, not 5goodmins.com, because Cloudflare can be
-  # configured to add Strict-Transport-Security itself and would mask the
-  # answer. If HSTS is missing there, the fix is
-  # server.tomcat.remoteip.internal-proxies scoped to the address that shows up
-  # in the access log, never `.*` and never a switch to `framework`.
+  # Measured on the live site, 2026-10-15 17:29Z, after the deploy that added
+  # this line. Railway's proxy does land inside the default internalProxies
+  # allowlist, so no server.tomcat.remoteip.internal-proxies narrowing was
+  # needed:
+  #
+  #   HTTP/2 302
+  #   location: https://5goodmins.com/login
+  #   set-cookie: JSESSIONID=...; Path=/; Secure; HttpOnly; SameSite=Lax
+  #   strict-transport-security: max-age=31536000 ; includeSubDomains
+  #
+  # Against 5goodmins.com rather than the *.up.railway.app domain, which is
+  # what an earlier version of this comment called for on the grounds that
+  # Cloudflare could be adding Strict-Transport-Security itself and would mask
+  # the answer. It cannot be, here: the pre-deploy baseline at 16:46Z returned
+  # no strict-transport-security at all through the same Cloudflare edge, which
+  # proves edge HSTS is off and leaves Tomcat as the only thing that could have
+  # produced the header afterwards. (The *.up.railway.app domain is in any case
+  # not attached to this service -- it answers a Railway edge 404 with
+  # x-railway-fallback: true.)
+  #
+  # Three things the baseline got wrong and this fixes, all in one line: the
+  # redirect is https rather than http, the session cookie carries Secure, and
+  # HSTS is present. The same response also shows the 401 with
+  # www-authenticate: Basic gone, which is SecurityConfig's chain having
+  # replaced Boot's auto-configured one.
+  #
+  # If a future host breaks this, the fix is still
+  # server.tomcat.remoteip.internal-proxies scoped to the real peer address --
+  # never `.*`, and never a switch to `framework`.
   forward-headers-strategy: native
 
   # Production values for the session cookie; application-dev.yaml relaxes
   # `secure`. These close the second half of the finding above: JSESSIONID was
-  # going out over the live site with neither flag.
+  # going out over the live site with neither flag, and now goes out with
+  # `Secure; HttpOnly; SameSite=Lax` (measured, same request as above).
   #
   # secure -- never sent over plain HTTP. forward-headers-strategy already
   # earns the flag for a proxied request; stating it means the session cookie

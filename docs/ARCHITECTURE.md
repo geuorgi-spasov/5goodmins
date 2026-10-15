@@ -1,6 +1,6 @@
 # Architecture Decisions — 5 Good Minutes (Activism Action Platform)
 
-**Revision 10** · 2026-10-15 · Status: living document
+**Revision 11** · 2026-10-15 · Status: living document
 Supersedes Rev 6. Flyway `V1__` is now written, applied against PostgreSQL 18
 and covered by repository tests; it is the source of truth for exact DDL — this
 document records the decisions and the reasons. Rev 7 corrects the places where
@@ -207,6 +207,38 @@ Total spend over a 9-week build plus a 6-month job hunt is under €100.
 **Deferred, not rejected.** Moving a Dockerized app to Hetzner is a weekend. If an interviewer probes: "Railway now, because deployment wasn't the skill I needed to prove; the container makes the move trivial."
 
 **Local Postgres runs the same major version as Railway's.** Check with `SELECT version();` on Railway and pin the Docker image tag to match.
+
+**The proxy chain is Cloudflare (Full strict) → Railway → Tomcat, and it is
+`server.forward-headers-strategy: native` that makes it survivable.** Measured
+on the live site rather than reasoned about, 2026-10-15: before the setting,
+`https://5goodmins.com/` returned `401` with `www-authenticate: Basic`, a
+`JSESSIONID` carrying neither `Secure` nor `SameSite`, and no
+`Strict-Transport-Security` at all. After, the same curl returns `302` to
+`https://5goodmins.com/login`, `JSESSIONID=...; Path=/; Secure; HttpOnly;
+SameSite=Lax`, and `strict-transport-security: max-age=31536000 ;
+includeSubDomains`.
+
+TLS terminates at the Cloudflare edge, so every request Tomcat sees is plain
+HTTP from a private address, and two things downstream read `request.isSecure()`
+rather than a header: Spring Security writes HSTS only when it is true, and the
+container marks the session cookie `Secure` only when it is true. `native` puts
+Tomcat's own `RemoteIpValve` in front of both, which fixes them at the source
+instead of overriding each condition separately — and it restores the real
+client IP, which the ADR-002 rate limiting needs in order to bucket by anything
+other than the proxy. `native` rather than `framework` because `RemoteIpValve`
+honours the forwarded headers only when the immediate peer is in its
+`internalProxies` allowlist, whereas the `ForwardedHeaderFilter` that
+`framework` installs trusts `X-Forwarded-Proto` unconditionally — anything able
+to reach the origin directly could then claim HTTPS and forge its client IP.
+Railway's proxy does fall inside the default allowlist, so no
+`internal-proxies` narrowing was needed.
+
+**The baseline is what makes the after-reading mean anything.** Measuring HSTS
+through Cloudflare only proves Tomcat is producing it because the same edge
+returned *no* HSTS header beforehand — which rules out the edge as the source
+and makes a dashboard check unnecessary. Had the pre-deploy request already
+carried HSTS, this measurement would have been worthless and would have had to
+move to an unproxied hostname.
 
 **Railway provisions PostgreSQL 18**, so local, CI and Testcontainers are
 pinned to **18** — `compose.yaml`, `TestcontainersConfiguration` and the Railway
@@ -748,6 +780,7 @@ Full Q&A in `docs/INTERVIEW-QA.md`. The headline list:
 
 ## 8. Changelog
 
+- **Rev 11 (2026-10-15):** ADR-004, the proxy chain measured instead of assumed. `server.forward-headers-strategy: native` is confirmed working on Railway: the live site went from `401` + `www-authenticate: Basic`, a flagless `JSESSIONID` and no HSTS, to `302` → `https://.../login`, `Secure; HttpOnly; SameSite=Lax` and `max-age=31536000 ; includeSubDomains`. Both findings from the pre-deploy baseline are closed, and Railway's proxy needed no `internal-proxies` narrowing. Recorded with the reason the measurement is valid through Cloudflare at all — the baseline returned no HSTS through the same edge, which rules the edge out as the source. `application.yaml`'s "still unverified" comment is replaced by the readings.
 - **Rev 10 (2026-10-15):** ADR-002, the signed-token mechanism written rather than described. Five decisions the Rev 8 text left implicit in "HMAC over user id and expiry": the purpose is signed too and is supplied by the verifying endpoint, because one key covers every emailed link; the lifetime hangs off the purpose (seven days for verification, ten years for unsubscribe, which ADR-005 makes a legal requirement rather than a preference); the signature is checked before the expiry is read; `app.token.secret` is required with no default and no startup-generated fallback, both rejected for named reasons; and password reset is explicitly **not** yet able to share the mechanism, because it is the one of the three uses that is not idempotent and needs the payload bound to the current password hash first. Also added `shared/TimeConfig`, a `Clock` bean, so that nothing reads the time from inside itself.
 - **Rev 9 (2026-10-15):** ADR-004 corrected: **Railway provisions PostgreSQL 18**, so local, CI and Testcontainers are pinned to 18 — this supersedes "pinned to 17" wherever Rev 7 says it. Rev 7's premise, that Railway offered only 16 and 17 and that 18 existed there as community forks, was wrong; the code had already moved to 18 and the documents had not. The decision itself never changed — match the deployed major version, checked with `SELECT version();` — only the number it resolves to. The 18 `VIRTUAL` generated-column default and the moved volume path are now live facts of the setup rather than warnings about a future upgrade, which makes the explicit `STORED` in `V1__` load-bearing; the full-text search tests passing against 18.6 in CI are the evidence it takes effect.
 - **Rev 8 (2026-10-15):** ADR-002, two gaps named rather than left implicit. The resend-verification form needs a per-address and per-IP rate limit, a cooldown and a daily cap: it has to answer identically for every address, which is what stops it being an enumeration oracle, and that same property lets it email-bomb a mailbox its user does not own. And a ban does not end a session already in progress — the banned user keeps access until it expires, which is acceptable only because the same transaction rejects their published actions, so harm to others stops at once; server-side invalidation arrives with DB-backed sessions. Neither is a change of decision; both are consequences of ADR-002's in-memory sessions and mandatory verification that the MVP accepts knowingly.
