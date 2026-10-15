@@ -72,6 +72,22 @@ exist in an in-memory database. One container is started for the whole suite.
 
 ---
 
+## Scheduled jobs
+
+`@Scheduled` runs in the application process (`shared/SchedulingConfig`). Today
+there is one job: the nightly purge of accounts that never confirmed their
+address, at 03:30 UTC. The daily digest joins it.
+
+**Known constraint: this assumes exactly one instance is running.** The
+scheduler knows nothing about its peers, so a second replica runs every job a
+second time — harmless for the purge, but two digest emails per subscriber. It
+is the single thing in this design that blocks horizontal scaling, and it is
+accepted knowingly for the MVP. The fix when it matters is ShedLock or a
+PostgreSQL advisory lock around each job, or moving the scheduled work to a
+separate single-replica deployment.
+
+---
+
 ## Configuration
 
 `application.yaml` holds local-development defaults. Every value can be

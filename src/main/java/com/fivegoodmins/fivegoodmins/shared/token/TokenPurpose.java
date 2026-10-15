@@ -57,7 +57,14 @@ public enum TokenPurpose {
         this.ttl = ttl;
     }
 
-    Duration ttl() {
+    /**
+     * Public because the seven days of {@link #EMAIL_VERIFICATION} is not only
+     * this class's business: {@code RegistrationService} purges unverified
+     * rows on the same window, and ADR-002 requires the two to be one number
+     * rather than two that happen to agree. Reading it from here is what makes
+     * that structural instead of a comment.
+     */
+    public Duration ttl() {
         return ttl;
     }
 }

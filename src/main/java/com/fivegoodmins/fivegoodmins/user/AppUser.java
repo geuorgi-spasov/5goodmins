@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 import java.time.Instant;
+import java.util.Locale;
 
 @Entity
 @Table(name = "app_user")
@@ -76,6 +77,32 @@ public class AppUser {
         this.passwordHash = passwordHash;
         this.displayName = displayName;
         this.lastDigestSentAt = now;
+    }
+
+    /**
+     * The canonical form of a login address: trimmed, and lowercased under
+     * {@link Locale#ROOT}.
+     *
+     * <p>Static and here, on the entity whose constructor states the
+     * contract, because two separate paths have to agree on it exactly --
+     * registration, which writes the row, and
+     * {@code AppUserDetailsService}, which looks it up. The database holds
+     * them to it with ck_app_user_email_lowercase and matches on plain
+     * equality through uq_app_user_email, so a path that normalizes
+     * differently does not produce a near-miss: it produces a registration
+     * that fails on a CHECK, or a login that matches no row.
+     *
+     * <p>{@code Locale.ROOT} is not decoration. Under a Turkish locale
+     * {@code "I".toLowerCase()} is "\u0131", so an address containing I would
+     * normalize to something uq_app_user_email cannot match -- a login that
+     * works or not depending on the server's default locale.
+     *
+     * <p>Null becomes the empty string rather than throwing. Both callers
+     * receive this from a form, where absent and blank are the same mistake,
+     * and an empty address matches no row and fails validation.
+     */
+    public static String normalizeEmail(String email) {
+        return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
     }
 
     @Override

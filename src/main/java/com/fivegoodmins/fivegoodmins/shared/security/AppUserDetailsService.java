@@ -7,8 +7,6 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
-import java.util.Locale;
-
 /**
  * Loads the login identity from app_user.
  *
@@ -58,7 +56,7 @@ class AppUserDetailsService implements UserDetailsService {
     // copies the four scalar fields it needs while the row is still at hand.
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        AppUser user = users.findByEmail(normalize(username))
+        AppUser user = users.findByEmail(AppUser.normalizeEmail(username))
                 // The messages below are for the application log, which is the
                 // only place they go: the provider replaces them before the
                 // user ever sees one. They are the only record of *which* of
@@ -72,21 +70,5 @@ class AppUserDetailsService implements UserDetailsService {
         }
 
         return new AppUserDetails(user);
-    }
-
-    /**
-     * AppUserRepository.findByEmail matches on equality, and
-     * ck_app_user_email_lowercase guarantees every stored address is already
-     * lowercase -- so the submitted one has to be lowercased here or the
-     * database's half of that contract does nothing and "Georgi@Example.com"
-     * fails to log in.
-     *
-     * <p>{@link Locale#ROOT}, not the default locale: under a Turkish locale
-     * {@code "I".toLowerCase()} is "ı", which would turn an address
-     * containing I into one that matches no row -- a login that works or not
-     * depending on the server's locale.
-     */
-    private static String normalize(String username) {
-        return username == null ? "" : username.trim().toLowerCase(Locale.ROOT);
     }
 }
