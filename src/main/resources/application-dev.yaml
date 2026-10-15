@@ -18,3 +18,10 @@ server:
     session:
       cookie:
         secure: false
+
+# A fixed local signing key, so that a restart does not invalidate the
+# verification link sitting in Mailpit (ADR-005). Local-only and worth nothing:
+# the production key comes from APP_TOKEN_SECRET and is never in the repository.
+app:
+  token:
+    secret: dev-only-signing-key-not-used-anywhere-else-32+
