@@ -15,20 +15,26 @@ server:
   # the real client IP, which the rate limiting on /login and /register
   # (ADR-002) will need in order to bucket by anything other than the proxy.
   #
-  # `native` rather than `framework`: RemoteIpValve honours an internalProxies
-  # allowlist -- loopback and the private ranges by default -- so a forwarded
-  # header arriving from somewhere else is ignored. ForwardedHeaderFilter, which
-  # `framework` installs, trusts X-Forwarded-Proto unconditionally, and a
-  # client that can reach the origin directly could then claim HTTPS.
+  # `native` rather than `framework`: RemoteIpValve only honours the forwarded
+  # headers when the immediate peer is in its internalProxies allowlist, so a
+  # header arriving straight from a client is ignored. ForwardedHeaderFilter,
+  # which `framework` installs, trusts X-Forwarded-Proto unconditionally -- and
+  # anything that can reach the origin directly could then claim HTTPS and
+  # forge its own client IP.
   #
-  # Not yet verified in production, and it is one curl to verify: that
-  # allowlist defaults to the IPv4 private ranges plus loopback, so if
-  # Railway's edge reaches the container from anything outside it -- an IPv6
-  # unique-local address, say -- the forwarded header is ignored and
-  # Strict-Transport-Security stays missing. If the live response still has no
-  # HSTS after this deploys, the fix is
-  # server.tomcat.remoteip.internal-proxies widened to the address that
-  # actually shows up in X-Forwarded-For, not a switch to `framework`.
+  # That allowlist defaults to every private range, not just the IPv4 ones:
+  # 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10 (carrier-grade NAT),
+  # 127/8, ::1/128, fe80::/10 and fc00::/7 (IPv6 unique-local). Tomcat 11 takes
+  # CIDR here rather than the IPv4-only regex of earlier versions, which is
+  # what most writing on this property still describes. Railway's proxy
+  # therefore almost certainly lands inside it.
+  #
+  # Still unverified on the live site, and it is one curl to verify -- against
+  # the *.up.railway.app domain, not 5goodmins.com, because Cloudflare can be
+  # configured to add Strict-Transport-Security itself and would mask the
+  # answer. If HSTS is missing there, the fix is
+  # server.tomcat.remoteip.internal-proxies scoped to the address that shows up
+  # in the access log, never `.*` and never a switch to `framework`.
   forward-headers-strategy: native
 
   # Production values for the session cookie; application-dev.yaml relaxes
