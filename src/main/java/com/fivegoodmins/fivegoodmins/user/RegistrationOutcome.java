@@ -49,9 +49,16 @@ public sealed interface RegistrationOutcome {
      * <p>The person who genuinely forgot they have an account gets silence
      * from this path. The standard answer is a "you already have an account,
      * reset your password instead" email to the address -- which tells the
-     * owner of the mailbox what the form will not tell a stranger, the same
-     * shape as the resend-verification form in ADR-002. It needs the email
-     * transport, so it arrives with it.
+     * owner of the mailbox what the form will not tell a stranger. It needs
+     * the email transport, so it arrives with it.
+     *
+     * <p>When it does, <strong>it goes out through the same after-commit,
+     * asynchronous listener as the verification email</strong> (ADR-005), and
+     * for a reason beyond tidiness: this outcome's whole job is to be
+     * indistinguishable from {@link Registered}, and a sender called on one
+     * path and not the other is the difference measurable with a stopwatch.
+     * Two paths that both publish an event and return are the same shape as
+     * well as the same page.
      */
     record AddressTaken() implements RegistrationOutcome { }
 }

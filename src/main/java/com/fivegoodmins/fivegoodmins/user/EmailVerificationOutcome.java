@@ -25,10 +25,11 @@ package com.fivegoodmins.fivegoodmins.user;
  * <p>So both collapse into {@link DeadLink}, whose answer is "register again"
  * -- and registering again over an unverified row already <em>is</em> a
  * resend, because {@link RegistrationService#register} replaces the row and
- * issues a new token. The feature was deleted rather than built. (The
- * resend-verification form ADR-002 asks for still has a job: the user who
- * registered an hour ago and never received the first email. That case is an
- * unexpired token, and it never reaches this type.)
+ * issues a new token. The feature was deleted rather than built -- and the
+ * same reasoning then took the resend form with it (ADR-002, Rev 14): its one
+ * remaining job was the user who never received the first email while it was
+ * still valid, which registering again also does, through an endpoint that is
+ * already rate-limited.
  *
  * <p>Nothing here leaks. A verification link is already proof that its holder
  * received the email, so saying which of these happened reveals nothing they

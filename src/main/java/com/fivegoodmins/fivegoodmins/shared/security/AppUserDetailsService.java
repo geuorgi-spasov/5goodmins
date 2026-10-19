@@ -36,11 +36,14 @@ import org.springframework.stereotype.Service;
  * same wall-clock time and the oracle does not reappear as a timing difference.
  *
  * <p>What this costs: a user who has not clicked the verification link is told
- * "wrong credentials", which is unhelpful and true-ish. The answer is not a more
- * specific error, it is the registration flow -- a "resend the verification
- * email" form that accepts any address and always answers the same way, so it
- * tells the owner of the mailbox what it will not tell a stranger. That form is
- * part of the next task.
+ * "wrong credentials", which is unhelpful and true-ish. The answer is not a
+ * more specific error here -- any wording that distinguishes the two rebuilds
+ * the oracle -- it is the registration form, which tells the owner of the
+ * mailbox what this will not tell a stranger. Registering again over an
+ * unverified row replaces it and sends a fresh link, so it is already the
+ * resend path; ADR-002 cut the separate resend form for that reason rather
+ * than build a second entry point to the same operation with its own abuse
+ * controls.
  */
 @Service
 class AppUserDetailsService implements UserDetailsService {

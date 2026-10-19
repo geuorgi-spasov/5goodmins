@@ -184,6 +184,15 @@ public class RegistrationService {
         // Those differ by around a millisecond against a shared 100, which is
         // inside the noise of a network round trip -- unlike the gap this
         // closes, which was the whole hundred.
+        //
+        // THIS DEFENCE IS CONDITIONAL ON HOW THE EMAIL SENDER IS BUILT. The
+        // moment a verification email is sent from inside this method, the
+        // registering path spends another 100-500ms in the provider's HTTP
+        // API and the refusing path spends none -- and the oracle is back,
+        // several times wider than it was before the encode moved up. ADR-005
+        // settles it in advance: sending is an @Async
+        // @TransactionalEventListener(AFTER_COMMIT), off the request thread,
+        // and both outcomes publish an event. Do not call a sender from here.
         String encodedPassword = passwordEncoder.encode(rawPassword);
 
         Optional<AppUser> existing = users.findByEmail(address);
