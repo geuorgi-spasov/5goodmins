@@ -1,0 +1,11 @@
+[(#{email.existingAccount.greeting(${displayName})})]
+
+[(#{email.existingAccount.intro})]
+
+[(${loginUrl})]
+
+[(#{email.existingAccount.unchanged})]
+
+--
+[(#{email.footer.automated})]
+[(${siteUrl})]

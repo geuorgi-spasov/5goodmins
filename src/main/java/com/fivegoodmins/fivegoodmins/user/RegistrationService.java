@@ -5,6 +5,7 @@ import com.fivegoodmins.fivegoodmins.shared.token.TokenPurpose;
 import com.fivegoodmins.fivegoodmins.shared.token.TokenVerification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -95,15 +97,18 @@ public class RegistrationService {
     private final AppUserRepository users;
     private final PasswordEncoder passwordEncoder;
     private final SignedTokenService tokens;
+    private final ApplicationEventPublisher events;
     private final Clock clock;
 
     RegistrationService(AppUserRepository users,
                         PasswordEncoder passwordEncoder,
                         SignedTokenService tokens,
+                        ApplicationEventPublisher events,
                         Clock clock) {
         this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.tokens = tokens;
+        this.events = events;
         this.clock = clock;
     }
 
@@ -127,7 +132,7 @@ public class RegistrationService {
      *
      * <p>Deleting and inserting makes the superseded token resolve to a row
      * that no longer exists, so it fails as {@link
-     * EmailVerificationOutcome.NoSuchAccount}. That is revocation without a
+     * EmailVerificationOutcome.DeadLink}. That is revocation without a
      * revocation list, which is the only way to get it when the token carries
      * its own claims and there is no token table.
      *
@@ -185,22 +190,31 @@ public class RegistrationService {
         // inside the noise of a network round trip -- unlike the gap this
         // closes, which was the whole hundred.
         //
-        // THIS DEFENCE IS CONDITIONAL ON HOW THE EMAIL SENDER IS BUILT. The
-        // moment a verification email is sent from inside this method, the
-        // registering path spends another 100-500ms in the provider's HTTP
-        // API and the refusing path spends none -- and the oracle is back,
-        // several times wider than it was before the encode moved up. ADR-005
-        // settles it in advance: sending is an @Async
-        // @TransactionalEventListener(AFTER_COMMIT), off the request thread,
-        // and both outcomes publish an event. Do not call a sender from here.
+        // THIS DEFENCE IS CONDITIONAL ON HOW THE EMAIL IS SENT. The moment a
+        // verification email is sent from inside this method, the registering
+        // path spends another 100-500ms in the provider's HTTP API and the
+        // refusing path spends none -- and the oracle is back, several times
+        // wider than it was before the encode moved up. Hence the two
+        // publishEvent calls below and nothing else: sending is an @Async
+        // @TransactionalEventListener(AFTER_COMMIT) in
+        // RegistrationEmailListener, off the request thread, and both outcomes
+        // publish. Do not call an EmailSender from here.
         String encodedPassword = passwordEncoder.encode(rawPassword);
 
         Optional<AppUser> existing = users.findByEmail(address);
         if (existing.isPresent()) {
             AppUser occupant = existing.get();
             if (occupant.isEmailVerified()) {
-                // Nothing written, nothing emailed, and the caller is about to
-                // render the same page it renders below.
+                // Nothing written, and the caller is about to render the same
+                // page it renders below. An email is still published -- to the
+                // owner of the mailbox, who is the only person it is safe to
+                // tell, and through the same listener and the same pool as the
+                // verification mail so that the two paths cost the same.
+                events.publishEvent(new RegistrationEmailEvent.ExistingAccount(
+                        occupant.getId(),
+                        occupant.getEmail(),
+                        occupant.getDisplayName(),
+                        localeOf(occupant)));
                 return new RegistrationOutcome.AddressTaken();
             }
             log.info("registration replaces unverified account {}", occupant.getId());
@@ -214,8 +228,35 @@ public class RegistrationService {
         // line, and an id read before the INSERT has reached the database is
         // an id that may yet be rolled back into a link somebody received.
 
-        return new RegistrationOutcome.Registered(
-                registered.getId(), tokens.issue(registered.getId(), VERIFICATION));
+        events.publishEvent(new RegistrationEmailEvent.Verification(
+                registered.getId(),
+                registered.getEmail(),
+                registered.getDisplayName(),
+                localeOf(registered),
+                tokens.issue(registered.getId(), VERIFICATION)));
+        // Published inside the transaction and delivered after it commits --
+        // that is what @TransactionalEventListener does with an event published
+        // while a transaction is in progress. Publishing from outside, after
+        // the method returned, would need the caller to know the ordering rule,
+        // and the id in the token would be one a rollback could still take
+        // away.
+
+        return new RegistrationOutcome.Registered(registered.getId());
+    }
+
+    /**
+     * The language to write to this user in.
+     *
+     * <p>{@code app_user.locale} rather than {@code LocaleContextHolder}: the
+     * cookie belongs to whoever is at the keyboard, and on the AddressTaken
+     * path that is not necessarily the person who will read the email. It is
+     * safe to read as a language tag because ck_app_user_locale restricts the
+     * column to 'bg' and 'en' -- without that constraint an unexpected value
+     * would resolve to {@link Locale#ROOT} and the subject lookup would fail
+     * with a {@code NoSuchMessageException} rather than fall back.
+     */
+    private static Locale localeOf(AppUser user) {
+        return Locale.forLanguageTag(user.getLocale());
     }
 
     /**

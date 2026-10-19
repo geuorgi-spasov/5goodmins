@@ -57,6 +57,14 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-validation</artifactId>
 		</dependency>
+		<!-- JavaMailSender, for the SMTP EmailSender that talks to Mailpit in
+		     development (ADR-005). The production transport is a provider's
+		     HTTP API and is still open (§5), so this starter is the dev path's
+		     dependency rather than the application's mail strategy. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-mail</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-database-postgresql</artifactId>
