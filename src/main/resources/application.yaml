@@ -85,3 +85,14 @@ spring:
       ddl-auto: validate
     properties:
       hibernate.jdbc.time_zone: UTC
+
+# app.token.secret is deliberately absent, for the same reason the datasource
+# above is: a committed default would be a published signing key, and every
+# email verification and unsubscribe link in production would be forgeable by
+# anyone who can read this file -- silently, because nothing about a forged
+# token looks wrong. With nothing here, startup fails naming the property.
+#
+# Production supplies APP_TOKEN_SECRET. Local runs get it from
+# application-dev.yaml, tests from src/test/resources/application.properties.
+# See SignedTokenProperties for the key's requirements and what rotating it
+# costs.

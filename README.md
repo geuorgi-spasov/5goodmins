@@ -72,6 +72,30 @@ exist in an in-memory database. One container is started for the whole suite.
 
 ---
 
+## Scheduled jobs
+
+`@Scheduled` runs in the application process (`shared/SchedulingConfig`). Today
+there is one job: the nightly purge of accounts that never confirmed their
+address, at 03:30 UTC. The daily digest joins it.
+
+**Known constraint: this assumes exactly one instance is running.** The
+scheduler knows nothing about its peers, so a second replica runs every job a
+second time — harmless for the purge, but two digest emails per subscriber. It
+is the single thing in this design that blocks horizontal scaling, and it is
+accepted knowingly for the MVP. The fix when it matters is ShedLock or a
+PostgreSQL advisory lock around each job, or moving the scheduled work to a
+separate single-replica deployment.
+
+**That assumption is false during a deploy.** Railway starts the new container,
+waits for its health check, and only then drains the old one — so two processes
+briefly run the same schedule, on every deploy rather than only when someone
+scales up. **Do not deploy within a few minutes of 03:00 or 03:30 UTC.** The
+purge tolerates it (running it twice deletes nothing the first pass left); the
+daily digest will not, so the lock above stops being optional on the day the
+digest ships.
+
+---
+
 ## Configuration
 
 `application.yaml` holds local-development defaults. Every value can be

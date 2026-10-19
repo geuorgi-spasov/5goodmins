@@ -61,6 +61,49 @@ No. Sequences are non-transactional: a rolled-back insert still burns its id,
 and a pooled sequence discards unused ids on shutdown. An id is an identifier,
 not a counter. Never use `MAX(id)` to count rows.
 
+### Q: Your registration security depends on ids never being reused. Does it? **[DEEP]**
+
+On Postgres, yes. On MySQL before 8.0, no — and the difference would have been
+a live vulnerability rather than a curiosity.
+
+The setup: re-registering over an unverified account deletes the row and
+inserts a new one rather than updating it in place (ADR-002). The point is to
+kill the previous occupant's verification token. The token is stateless — it
+signs a user id and an expiry, there is no token table and nothing to mark as
+used — so the *only* thing that revokes it is the id it names ceasing to exist.
+Delete-and-insert is revocation by deletion.
+
+That works because the new row gets a new id. Postgres identity columns draw
+from a sequence that only ever moves forward: `nextval` is non-transactional,
+deleted values are never returned, and a restart does not rewind it.
+
+MySQL's InnoDB before 8.0 held the `AUTO_INCREMENT` counter **in memory** and
+re-derived it on startup as `MAX(id) + 1`. Delete the highest row, restart the
+server, and the next insert receives the id you just deleted. MySQL 8.0
+persists the counter to the redo log, which is what fixed it.
+
+What that would cost here, concretely — and the unsubscribe link is the worse
+case, not the verification link:
+
+- A user deletes their account (ADR-015, hard delete). Their row was the
+  highest id. The server restarts; the next person to register is handed the
+  departed user's id.
+- Every digest email ever sent to the first user carries a one-click
+  unsubscribe token signed with that id, and those are valid for **ten years**
+  (ADR-005 makes the link a legal requirement, so it cannot expire quickly).
+- An old link out of the first user's mailbox now unsubscribes the second user.
+  Same signature check, same key, same purpose — nothing about the token is
+  forged. The identifier simply means someone else now.
+
+Two things worth saying after that. First, this is why "which database" is a
+security question and not only a performance one: the design leans on a
+guarantee one engine makes and another, until recently, did not. Second, the
+general fix if I ever had to run on an engine that reuses ids is to sign
+something that is unique per row rather than per id — a random `token_version`
+or the row's creation timestamp in the payload — which is the same shape as the
+fix ADR-002 already names for password reset, where the signed material binds
+to the current password hash.
+
 ---
 
 ## 2. Time

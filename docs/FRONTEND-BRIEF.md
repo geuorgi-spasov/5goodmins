@@ -132,7 +132,7 @@ valid title.
 |---|---|---|
 | 6 | **Register** | Email, password, password confirmation, display name, consent checkbox for the privacy policy. |
 | 7 | **Login** | Email, password. Errors are deliberately vague ("wrong email or password"). |
-| 8 | **Verification notice / result** | "Check your inbox", plus the page the emailed link lands on: success, already-used, or expired-with-resend. |
+| 8 | **Verification notice / result** | "Check your inbox", plus the page the emailed link lands on. Three result states, and **none of them offers to resend** (ADR-002 cut the resend form): **confirmed** — success, link to log in; **already confirmed** — same reassuring tone, not an error, since a second click or a mail client prefetching the link is ordinary; **dead link** — the link expired or the unconfirmed account was purged after seven days, so the only action is a link back to Register, which re-issues a fresh email. The "check your inbox" state must also be what a user sees after registering an address that already has a confirmed account — identical page, identical wording, so the form cannot be used to discover who has an account here. |
 | 9 | **Unsubscribe confirmation** | Reached from a digest email link, **works without login**. One page: confirm, done. |
 
 ### Signed in

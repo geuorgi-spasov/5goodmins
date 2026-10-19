@@ -7,8 +7,6 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
-import java.util.Locale;
-
 /**
  * Loads the login identity from app_user.
  *
@@ -38,11 +36,14 @@ import java.util.Locale;
  * same wall-clock time and the oracle does not reappear as a timing difference.
  *
  * <p>What this costs: a user who has not clicked the verification link is told
- * "wrong credentials", which is unhelpful and true-ish. The answer is not a more
- * specific error, it is the registration flow -- a "resend the verification
- * email" form that accepts any address and always answers the same way, so it
- * tells the owner of the mailbox what it will not tell a stranger. That form is
- * part of the next task.
+ * "wrong credentials", which is unhelpful and true-ish. The answer is not a
+ * more specific error here -- any wording that distinguishes the two rebuilds
+ * the oracle -- it is the registration form, which tells the owner of the
+ * mailbox what this will not tell a stranger. Registering again over an
+ * unverified row replaces it and sends a fresh link, so it is already the
+ * resend path; ADR-002 cut the separate resend form for that reason rather
+ * than build a second entry point to the same operation with its own abuse
+ * controls.
  */
 @Service
 class AppUserDetailsService implements UserDetailsService {
@@ -58,7 +59,7 @@ class AppUserDetailsService implements UserDetailsService {
     // copies the four scalar fields it needs while the row is still at hand.
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        AppUser user = users.findByEmail(normalize(username))
+        AppUser user = users.findByEmail(AppUser.normalizeEmail(username))
                 // The messages below are for the application log, which is the
                 // only place they go: the provider replaces them before the
                 // user ever sees one. They are the only record of *which* of
@@ -72,21 +73,5 @@ class AppUserDetailsService implements UserDetailsService {
         }
 
         return new AppUserDetails(user);
-    }
-
-    /**
-     * AppUserRepository.findByEmail matches on equality, and
-     * ck_app_user_email_lowercase guarantees every stored address is already
-     * lowercase -- so the submitted one has to be lowercased here or the
-     * database's half of that contract does nothing and "Georgi@Example.com"
-     * fails to log in.
-     *
-     * <p>{@link Locale#ROOT}, not the default locale: under a Turkish locale
-     * {@code "I".toLowerCase()} is "ı", which would turn an address
-     * containing I into one that matches no row -- a login that works or not
-     * depending on the server's locale.
-     */
-    private static String normalize(String username) {
-        return username == null ? "" : username.trim().toLowerCase(Locale.ROOT);
     }
 }

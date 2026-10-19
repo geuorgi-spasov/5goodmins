@@ -38,6 +38,50 @@ jobs:
           # does persist between runs, because GitHub stores it for us.
           cache: maven
 
+      # ADR-019, enforced rather than asserted. The rule is violated by
+      # addition, not by editing: nobody breaks it in a file that already
+      # takes a Clock, they break it in a new class written months from now
+      # with one Instant.now() in it, which review is bad at catching.
+      #
+      # Flags every `.now(` and allows only `.now(clock)`, rather than
+      # flagging the no-argument form. The first version matched `.now()`
+      # literally and let `LocalDate.now(ZoneOffset.UTC)` straight through --
+      # which reads the system clock exactly as much as `LocalDate.now()`
+      # does, since the zone overload builds a Clock.system(zone) internally.
+      # An allowlist of the one legal shape is the right way round: a
+      # blocklist of illegal ones is a list someone has to remember to extend.
+      # `clock.instant()`, the idiom this codebase actually uses, has no
+      # `.now(` in it and never matches.
+      #
+      # `new Date(` is in here too, because java.util.Date is rejected
+      # outright (ADR-019, §2) and it is the other way to read the clock in
+      # place.
+      #
+      # A grep rather than ArchUnit. ArchUnit would express this and the
+      # package-dependency rules properly, but its JUnit integration is built
+      # against JUnit Platform 1.x and this project is on JUnit 6 -- an
+      # unverified compatibility question in exchange for a rule a few lines
+      # of shell already enforce. When the package rules need enforcing too,
+      # that is the moment to pay for the dependency.
+      #
+      # Runs before the build, because it takes a second and a failure here is
+      # worth reporting without waiting for Testcontainers.
+      #
+      # The last two filters are not optional: the rule is *discussed* in
+      # Javadoc in three places, so without them this fails on its own
+      # documentation. The first drops lines whose content begins with * or
+      # //, the second drops inline {@code Instant.now()}.
+      - name: Time comes from the injected Clock (ADR-019)
+        run: |
+          if grep -rnE '\.now\(|System\.currentTimeMillis\(\)|new +Date *\(' \
+                  --include='*.java' src/main/java \
+               | grep -vE '\.now\((clock|this\.clock)\)' \
+               | grep -vE ':[0-9]+:[[:space:]]*(\*|//)' \
+               | grep -v '{@code'; then
+            echo "::error::ADR-019: time comes from the injected Clock bean. Use clock.instant(), or pass an Instant in -- not a no-arg now(), a zoned now(), or new Date()."
+            exit 1
+          fi
+
       # The whole suite, including the repository tests. ubuntu-latest has a
       # working Docker daemon, so Testcontainers starts its own PostgreSQL and
       # no `services:` block is needed. This is the quality gate the Dockerfile

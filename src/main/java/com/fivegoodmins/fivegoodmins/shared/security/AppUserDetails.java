@@ -15,7 +15,7 @@ import java.util.List;
  * it afterwards.
  *
  * <p>A copy rather than the entity itself, for two reasons. Entities never leave
- * the service layer (CLAUDE.md), and this object lives in the session for the
+ * the service layer (ADR-013), and this object lives in the session for the
  * length of the login -- an entity there would be a detached instance of
  * unknown age handed to every request, which is how stale reads and
  * {@code LazyInitializationException} get into a codebase that has
