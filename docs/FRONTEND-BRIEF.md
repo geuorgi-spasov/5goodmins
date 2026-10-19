@@ -161,17 +161,36 @@ valid title.
 | 19 | **404 / 403 / 500** | Real pages in the site layout, not stack traces. 404 matters: deleted actions land here from old digest links. |
 | 20 | **Report an action** | Small form: reason (select, includes "no longer live") + optional text. Modal or small page, submitted via htmx. |
 
-### Emails (3)
+### Emails (4)
 
 Separate templates, and genuinely different work from web pages: table-based
-layout, inline CSS, ~600px, light/dark-safe colours, a plain-text alternative,
-and an unsubscribe footer.
+layout, inline CSS, ~600px, light/dark-safe colours, and a plain-text
+alternative. The unsubscribe footer belongs to the digest only — the other
+three are transactional, and an unsubscribe link on a verification email is a
+link to opt out of the thing the user is in the middle of doing.
 
-1. **Email verification** — one button, minimal.
+1. **Email verification** — one button, minimal. **Built**, along with 4 and a
+   shared `email/layout.html` carrying the header, footer and dark-scheme
+   overrides. Each email is an HTML template plus a `.txt` twin of the same
+   name; both render from the same model, and both are in the message bundles.
 2. **Welcome** — sent after verification; the five newest active actions.
 3. **Daily digest** — the flagship email: new actions matching the user's
    subscriptions, each as a title, category/region badges, one line, a link.
    Must survive Gmail, Outlook and Apple Mail.
+4. **"You already have an account"** — sent when someone registers an address
+   that already has a confirmed account. **Built.** Not in the original three,
+   and not optional: the registration form must answer identically for every
+   address (page 6), which leaves the mailbox as the only safe place to tell
+   the owner anything. Deliberately reassuring rather than alarming — the
+   likely reader is the owner, who forgot. It offers **login, not a password
+   reset**, because reset is v1.1 (section 10); that is the one place the
+   missing reset is visible to a user, and this email is where it goes when it
+   lands.
+
+The two that exist are a starting point, not a design — redesign them freely.
+What must not change: every string stays in `messages_bg` / `messages_en`, the
+`.txt` twin stays in step with its HTML, and nothing user-supplied goes in a
+subject line (a newline in a display name is header injection).
 
 ---
 

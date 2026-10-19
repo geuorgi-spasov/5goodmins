@@ -1,0 +1,74 @@
+<!--/*
+  Email 1 of 3: confirm the address given at registration (ADR-002).
+
+  One button and as little else as possible. Everything in here is either the
+  link or a reason to trust the link, because this is the email a brand-new
+  user judges the site by -- and the one a spam filter judges hardest, since a
+  first message from a new sending domain to someone who has never written back
+  is the least trusted mail there is.
+
+  Model: displayName, verificationUrl, expiryDays. siteUrl comes from the
+  composer.
+*/-->
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      th:replace="~{email/layout :: page(#{email.verification.subject}, #{email.verification.preheader}, ~{:: #content})}">
+<body>
+<div id="content"
+     style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; font-size:16px; line-height:24px;">
+
+    <p class="text" style="margin:16px 0 12px 0; color:#172424;"
+       th:text="#{email.verification.greeting(${displayName})}">Hello,</p>
+
+    <p class="text" style="margin:0 0 24px 0; color:#172424;"
+       th:text="#{email.verification.intro}">Confirm your address.</p>
+
+    <!--/* A table-wrapped button, not a styled <a> on its own: Outlook ignores
+           padding on an inline element, which turns the button into a bare
+           link. bgcolor as well as background-color for the same reason. */-->
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;">
+        <tr>
+            <td align="center" bgcolor="#0f766e" style="background-color:#0f766e; border-radius:6px;">
+                <a th:href="${verificationUrl}" th:text="#{email.verification.cta}"
+                   style="display:inline-block; padding:14px 28px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; font-size:16px; font-weight:700; color:#ffffff; text-decoration:none;">
+                    Confirm my address
+                </a>
+            </td>
+        </tr>
+    </table>
+
+    <!--/* The URL in full, because a surprising number of clients and corporate
+           gateways rewrite or strip the button, and because a link a user can
+           read is a link they can decide to trust. Broken across lines by the
+           client rather than by us: word-break, not a manual split, which would
+           corrupt the token. */-->
+    <p class="muted" style="margin:0 0 4px 0; font-size:13px; line-height:20px; color:#5c6b6b;"
+       th:text="#{email.footer.linkFallback}">If the button does not work:</p>
+    <!--/* Three spellings of one instruction, because an unbreakable
+           90-character token URL in a fixed 600px table is a horizontal
+           scrollbar on a phone, and no single property is widely enough
+           supported to prevent it. Measured against Mailpit's compatibility
+           check: word-break is unsupported or partial in 34 of 47 clients and
+           overflow-wrap -- the current standard -- is worse, at 50%
+           unsupported. word-wrap is the legacy Microsoft name Outlook
+           understands and caniemail does not test at all. The bet is the union
+           of the three, which is weakly better than any one of them.
+
+           Worth knowing before optimising the number: adding these *lowered*
+           Mailpit's aggregate score from 86.1% to 85.6%, because that score
+           averages over the declarations present rather than over outcomes.
+           The behaviour is what matters; where none of the three lands, the
+           URL overflows and the button above it still works. */-->
+    <p style="margin:0 0 24px 0; font-size:13px; line-height:20px; word-break:break-all; overflow-wrap:break-word; word-wrap:break-word;">
+        <a th:href="${verificationUrl}" th:text="${verificationUrl}"
+           style="color:#0f766e;">https://5goodmins.com/verify-email?token=...</a>
+    </p>
+
+    <p class="muted" style="margin:0 0 6px 0; font-size:13px; line-height:20px; color:#5c6b6b;"
+       th:text="#{email.verification.expiry(${expiryDays})}">The link is valid for 7 days.</p>
+
+    <p class="muted" style="margin:0 0 16px 0; font-size:13px; line-height:20px; color:#5c6b6b;"
+       th:text="#{email.verification.unexpected}">If you did not register, delete this email.</p>
+</div>
+</body>
+</html>

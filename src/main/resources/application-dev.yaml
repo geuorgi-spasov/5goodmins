@@ -9,6 +9,21 @@ spring:
     url: jdbc:postgresql://localhost:5432/fivegoodmins
     username: app
     password: app
+  # Mailpit, from compose.yaml: SMTP on 1025, its web interface on 8025.
+  # Setting a host is what makes Boot create a JavaMailSender, which is in turn
+  # what makes EmailConfig choose the SMTP sender over the one that refuses --
+  # so this single line is the difference between a dev run that delivers mail
+  # and one that logs a failure. Nothing to authenticate against: Mailpit
+  # accepts everything and delivers nowhere.
+  mail:
+    host: localhost
+    port: 1025
+
+  # Templates reloaded on save, so an email can be edited and re-sent without a
+  # restart. Applies to both halves of each email -- the text resolver in
+  # EmailConfig reads this same property.
+  thymeleaf:
+    cache: false
 
 # A local run is plain HTTP on localhost, and a Secure cookie is not sent over
 # it by every browser -- Safari refuses, so the session silently never sticks.
@@ -25,3 +40,11 @@ server:
 app:
   token:
     secret: dev-only-signing-key-not-used-anywhere-else-32+
+
+  # From an address nobody owns, deliberately: Mailpit delivers nowhere, so a
+  # real address here would only be a real address to typo into production.
+  # base-url is localhost so the emailed link opens the local app.
+  mail:
+    from: no-reply@localhost
+    from-name: 5 Good Minutes (dev)
+    base-url: http://localhost:8080

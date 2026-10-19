@@ -11,6 +11,7 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.event.EventListener;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -19,6 +20,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -66,6 +70,9 @@ class RegistrationServiceTest {
     @Autowired
     MutableClock clock;
 
+    @Autowired
+    RecordedEmails emails;
+
     @BeforeEach
     void resetTheClock() {
         // The context is cached across methods, so the clock has to go back to
@@ -76,12 +83,23 @@ class RegistrationServiceTest {
         // what day the suite runs.
         clock.set(Instant.now());
         passwordEncoder.resetCount();
+        emails.clear();
     }
 
     private RegistrationOutcome.Registered register(String email, String password, String name) {
         RegistrationOutcome outcome = registrations.register(email, password, name);
         assertThat(outcome).isInstanceOf(RegistrationOutcome.Registered.class);
         return (RegistrationOutcome.Registered) outcome;
+    }
+
+    /**
+     * The verification token, read from the published event rather than from
+     * the outcome -- because the outcome no longer carries one, and because
+     * every test that confirms an address now also asserts that registering
+     * published exactly one event for that account.
+     */
+    private String tokenFor(RegistrationOutcome.Registered registered) {
+        return emails.verificationFor(registered.userId()).token();
     }
 
     // -----------------------------------------------------------------------
@@ -148,7 +166,7 @@ class RegistrationServiceTest {
     void issuesATokenThatVerifiesTheAccountItNames() {
         RegistrationOutcome.Registered registered = register(ADDRESS, PASSWORD, "Georgi");
 
-        assertThat(registrations.verifyEmail(registered.verificationToken()))
+        assertThat(registrations.verifyEmail(tokenFor(registered)))
                 .isEqualTo(new EmailVerificationOutcome.Verified(registered.userId()));
         assertThat(users.findByEmail(ADDRESS).orElseThrow().isEmailVerified()).isTrue();
     }
@@ -156,7 +174,7 @@ class RegistrationServiceTest {
     @Test
     void reportsASecondClickSeparatelySoTheWelcomeEmailIsSentOnce() {
         RegistrationOutcome.Registered registered = register(ADDRESS, PASSWORD, "Georgi");
-        String link = registered.verificationToken();
+        String link = tokenFor(registered);
         Instant firstVerification = Instant.parse("2026-10-15T09:00:00Z");
 
         clock.set(firstVerification);
@@ -183,7 +201,7 @@ class RegistrationServiceTest {
         // seven days -- so a resent link would die at the next nightly run.
         // Registering again replaces the row and issues a fresh token, which
         // is what a resend would have had to do anyway.
-        assertThat(registrations.verifyEmail(registered.verificationToken()))
+        assertThat(registrations.verifyEmail(tokenFor(registered)))
                 .isEqualTo(new EmailVerificationOutcome.DeadLink());
         assertThat(users.findByEmail(ADDRESS).orElseThrow().isEmailVerified()).isFalse();
     }
@@ -191,7 +209,7 @@ class RegistrationServiceTest {
     @Test
     void tellsSomeoneReclickingAnOldConfirmedLinkThatTheyAreAlreadyDone() {
         RegistrationOutcome.Registered registered = register(ADDRESS, PASSWORD, "Georgi");
-        registrations.verifyEmail(registered.verificationToken());
+        registrations.verifyEmail(tokenFor(registered));
 
         clock.advance(TokenPurpose.EMAIL_VERIFICATION.ttl().plusDays(2));
 
@@ -199,7 +217,7 @@ class RegistrationServiceTest {
         // Answering from the expiry alone would say "register again", and
         // registering again returns AddressTaken and mails nothing -- a loop
         // ending at "check your inbox" for an email that never arrives.
-        assertThat(registrations.verifyEmail(registered.verificationToken()))
+        assertThat(registrations.verifyEmail(tokenFor(registered)))
                 .isEqualTo(new EmailVerificationOutcome.AlreadyVerified(registered.userId()));
     }
 
@@ -233,7 +251,7 @@ class RegistrationServiceTest {
 
         // Still in date, so this is the lookup rather than the expiry
         // answering: an authentic token is not a promise that the row exists.
-        assertThat(registrations.verifyEmail(registered.verificationToken()))
+        assertThat(registrations.verifyEmail(tokenFor(registered)))
                 .isEqualTo(new EmailVerificationOutcome.DeadLink());
     }
 
@@ -269,16 +287,16 @@ class RegistrationServiceTest {
         // from their own first registration, would confirm an account whose
         // password belongs to someone else.
         assertThat(squatter.userId()).isNotEqualTo(owner.userId());
-        assertThat(registrations.verifyEmail(squatter.verificationToken()))
+        assertThat(registrations.verifyEmail(tokenFor(squatter)))
                 .isEqualTo(new EmailVerificationOutcome.DeadLink());
-        assertThat(registrations.verifyEmail(owner.verificationToken()))
+        assertThat(registrations.verifyEmail(tokenFor(owner)))
                 .isEqualTo(new EmailVerificationOutcome.Verified(owner.userId()));
     }
 
     @Test
     void refusesToTouchAVerifiedAccountAndDeclinesToSaySo() {
         RegistrationOutcome.Registered owner = register(ADDRESS, PASSWORD, "Georgi");
-        registrations.verifyEmail(owner.verificationToken());
+        registrations.verifyEmail(tokenFor(owner));
 
         RegistrationOutcome outcome = registrations.register(ADDRESS, "an-attackers-password", "Not Georgi");
 
@@ -300,7 +318,7 @@ class RegistrationServiceTest {
     @Test
     void hashesAPasswordEvenForAnAddressItIsAboutToRefuse() {
         RegistrationOutcome.Registered owner = register(ADDRESS, PASSWORD, "Georgi");
-        registrations.verifyEmail(owner.verificationToken());
+        registrations.verifyEmail(tokenFor(owner));
         passwordEncoder.resetCount();
 
         assertThat(registrations.register(ADDRESS, "an-attackers-password", "Not Georgi"))
@@ -327,6 +345,59 @@ class RegistrationServiceTest {
         assertThat(passwordEncoder.count()).isOne();
     }
 
+    @Test
+    void publishesOneEmailEventOnTheRegisteringPath() {
+        RegistrationOutcome.Registered registered = register(ADDRESS, PASSWORD, "  Georgi  ");
+
+        assertThat(emails.all()).singleElement()
+                .isInstanceOfSatisfying(RegistrationEmailEvent.Verification.class, event -> {
+                    assertThat(event.userId()).isEqualTo(registered.userId());
+                    // The normalized address and the trimmed name, read back
+                    // from the row rather than from the arguments: the email
+                    // goes where the row says, not where the form said.
+                    assertThat(event.email()).isEqualTo(ADDRESS);
+                    assertThat(event.displayName()).isEqualTo("Georgi");
+                    assertThat(event.locale()).isEqualTo(Locale.forLanguageTag("bg"));
+                    assertThat(event.token()).isNotBlank();
+                });
+    }
+
+    @Test
+    void publishesOneEmailEventOnTheRefusingPathToo() {
+        RegistrationOutcome.Registered owner = register(ADDRESS, PASSWORD, "Georgi");
+        registrations.verifyEmail(tokenFor(owner));
+        emails.clear();
+
+        assertThat(registrations.register(ADDRESS, "an-attackers-password", "Not Georgi"))
+                .isEqualTo(new RegistrationOutcome.AddressTaken());
+
+        // The requirement ADR-005 states before the sender exists, and the one
+        // that is easiest to leave out: if only the registering path published,
+        // only the registering path would pay the mail provider's 100-500ms,
+        // and the identical page the two outcomes render would be undone by a
+        // stopwatch -- several times more loudly than the BCrypt gap that was
+        // closed by hashing on both paths.
+        assertThat(emails.all()).singleElement()
+                .isInstanceOfSatisfying(RegistrationEmailEvent.ExistingAccount.class, event -> {
+                    assertThat(event.userId()).isEqualTo(owner.userId());
+                    assertThat(event.email()).isEqualTo(ADDRESS);
+                    // The owner's name, not the name the stranger typed: this
+                    // email is addressed to whoever reads the mailbox.
+                    assertThat(event.displayName()).isEqualTo("Georgi");
+                });
+    }
+
+    @Test
+    void publishesNothingWhenItRefusesTheInputOutright() {
+        assertThatExceptionOfType(IllegalArgumentException.class)
+                .isThrownBy(() -> registrations.register(ADDRESS, "short", "Georgi"));
+
+        // A rejected form is not a registration attempt worth emailing anyone
+        // about -- and the address may well belong to someone who did not ask
+        // for mail from this site.
+        assertThat(emails.all()).isEmpty();
+    }
+
     // -----------------------------------------------------------------------
     // The purge
     // -----------------------------------------------------------------------
@@ -347,7 +418,7 @@ class RegistrationServiceTest {
     void removesUnverifiedAccountsOnceTheirLinkHasDiedAndKeepsVerifiedOnes() {
         register(ADDRESS, PASSWORD, "Georgi");
         RegistrationOutcome.Registered verified = register("verified@seed.example", PASSWORD, "Verified");
-        registrations.verifyEmail(verified.verificationToken());
+        registrations.verifyEmail(tokenFor(verified));
 
         clock.advance(TokenPurpose.EMAIL_VERIFICATION.ttl().plus(Duration.ofHours(1)));
 
@@ -444,6 +515,52 @@ class RegistrationServiceTest {
         @Bean
         CountingPasswordEncoder passwordEncoder() {
             return new CountingPasswordEncoder(PasswordEncoderFactories.createDelegatingPasswordEncoder());
+        }
+
+        @Bean
+        RecordedEmails recordedEmails() {
+            return new RecordedEmails();
+        }
+    }
+
+    /**
+     * Captures what {@code register} publishes.
+     *
+     * <p>A plain {@code @EventListener}, not {@code @TransactionalEventListener}:
+     * this test's transaction is rolled back by {@code @DataJpaTest} and never
+     * commits, so an after-commit listener would record nothing and every
+     * assertion here would pass for the wrong reason. What belongs in this file
+     * is <em>that</em> the events are published, with the right values, inside
+     * the transaction that wrote the row. That they are then delivered after
+     * commit and off the request thread is {@code RegistrationEmailListenerTest},
+     * where a real transaction is committed on purpose.
+     */
+    static final class RecordedEmails {
+
+        private final List<RegistrationEmailEvent> recorded = new ArrayList<>();
+
+        @EventListener
+        void record(RegistrationEmailEvent event) {
+            recorded.add(event);
+        }
+
+        List<RegistrationEmailEvent> all() {
+            return List.copyOf(recorded);
+        }
+
+        void clear() {
+            recorded.clear();
+        }
+
+        /** The one verification email published for this account. */
+        RegistrationEmailEvent.Verification verificationFor(long userId) {
+            List<RegistrationEmailEvent.Verification> matching = recorded.stream()
+                    .filter(RegistrationEmailEvent.Verification.class::isInstance)
+                    .map(RegistrationEmailEvent.Verification.class::cast)
+                    .filter(event -> event.userId() == userId)
+                    .toList();
+            assertThat(matching).as("verification emails published for account %s", userId).hasSize(1);
+            return matching.getFirst();
         }
     }
 

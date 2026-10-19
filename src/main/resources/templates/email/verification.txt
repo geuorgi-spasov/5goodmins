@@ -1,0 +1,13 @@
+[(#{email.verification.greeting(${displayName})})]
+
+[(#{email.verification.intro})]
+
+[(${verificationUrl})]
+
+[(#{email.verification.expiry(${expiryDays})})]
+
+[(#{email.verification.unexpected})]
+
+--
+[(#{email.footer.automated})]
+[(${siteUrl})]
