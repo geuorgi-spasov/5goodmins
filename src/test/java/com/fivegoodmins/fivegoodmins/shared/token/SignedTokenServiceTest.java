@@ -257,7 +257,7 @@ class SignedTokenServiceTest {
 
     /**
      * A clock that can be moved, which is the whole reason the service takes one
-     * (CLAUDE.md). The alternative for the expiry tests is Thread.sleep, and a
+     * (ADR-019). The alternative for the expiry tests is Thread.sleep, and a
      * seven-day expiry does not have a version of that worth writing.
      */
     private static final class TickingClock extends Clock {

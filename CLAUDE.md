@@ -53,7 +53,7 @@ Prefer official documentation over blog posts for security and persistence.
   `LocalDateTime`, never `java.util.Date`.
 - Every list query carries a tiebreaker: `ORDER BY published_at DESC, id DESC`.
 - Pass the current `Instant` (or a `Clock`) into anything time-dependent. No
-  `Instant.now()` buried inside an entity or a service method.
+  `Instant.now()` buried inside an entity or a service method (ADR-019).
 - **State changes go through named methods**, never setters. `Action` has no
   `setStatus`, `setPublishedAt`, `setId`, `setCreatedAt` or `setUpdatedAt`, and
   `publish()` writes `published_at` exactly once because the digest watermark

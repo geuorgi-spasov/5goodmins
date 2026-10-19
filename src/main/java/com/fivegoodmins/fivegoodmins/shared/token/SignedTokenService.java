@@ -67,7 +67,7 @@ public class SignedTokenService {
 
     /**
      * @param clock injected rather than {@code Instant.now()} inside the
-     *              methods (CLAUDE.md), which is what lets a test issue a token
+     *              methods (ADR-019), which is what lets a test issue a token
      *              and then watch it expire without sleeping.
      */
     SignedTokenService(SignedTokenProperties properties, Clock clock) {
