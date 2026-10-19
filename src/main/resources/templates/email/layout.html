@@ -1,0 +1,86 @@
+<!--/*
+  The shared scaffolding for every email this application sends (ADR-005,
+  frontend brief section 4).
+
+  Email HTML is not web HTML and the differences here are all deliberate:
+
+  - Tables for layout, not flexbox or grid. Outlook on Windows renders through
+    Word's HTML engine, which supports neither.
+  - Inline styles on nearly everything. Gmail strips <style> from the <head> in
+    some clients, so anything that matters has to survive without it.
+  - A fixed 600px maximum. Wider than that and Outlook's reading pane
+    introduces a horizontal scrollbar.
+  - The <style> block below carries only the dark-scheme overrides, because
+    those cannot be inlined. It needs !important: an inline style beats a
+    stylesheet rule otherwise. Apple Mail honours it, Gmail does not and
+    force-inverts instead -- which is why the light palette is also readable
+    when inverted rather than relying on the media query.
+
+  Taking a fragment parameter for the body (th:insert="${content}") rather than
+  having each email repeat the table scaffolding: there are three of these
+  emails in the MVP and the scaffolding is the part that is easy to get subtly
+  wrong in one of them.
+*/-->
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org"
+      th:fragment="page(subject, preheader, content)"
+      th:lang="${#locale.language}" lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <title th:text="${subject}">5 Good Minutes</title>
+    <style>
+        @media (prefers-color-scheme: dark) {
+            .page { background-color: #0f1717 !important; }
+            .card { background-color: #1b2525 !important; }
+            .text { color: #e7eeee !important; }
+            .muted { color: #9fb0b0 !important; }
+            .rule { border-top-color: #324040 !important; }
+        }
+    </style>
+</head>
+<body class="page"
+      style="margin:0; padding:0; background-color:#f3f6f6; color:#172424;">
+
+<!--/* The preheader: the line a mail client shows next to the subject. Hidden
+       in the body itself, and padded with zero-width spaces so the client does
+       not fill the rest of the preview with the first words of the content. */-->
+<div style="display:none; max-height:0; overflow:hidden; mso-hide:all;"
+     th:text="${preheader}">&nbsp;</div>
+
+<table role="presentation" class="page" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="background-color:#f3f6f6;">
+    <tr>
+        <td align="center" style="padding:24px 12px;">
+            <table role="presentation" class="card" width="600" cellpadding="0" cellspacing="0" border="0"
+                   style="width:100%; max-width:600px; background-color:#ffffff; border-radius:10px;">
+                <tr>
+                    <td class="text"
+                        style="padding:28px 32px 4px 32px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; font-size:17px; font-weight:700; color:#0f766e;"
+                        th:text="#{email.brand}">5 Good Minutes
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding:4px 32px 8px 32px;" th:insert="${content}">
+                        <p>The email body goes here.</p>
+                    </td>
+                </tr>
+                <tr>
+                    <td class="rule muted"
+                        style="padding:4px 32px 28px 32px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif; font-size:12px; line-height:18px; color:#5c6b6b;">
+                        <hr class="rule" style="border:0; border-top:1px solid #e3e9e9; margin:0 0 14px 0;">
+                        <p style="margin:0 0 4px 0;" th:text="#{email.footer.automated}">Automated message.</p>
+                        <p style="margin:0;">
+                            <a th:href="${siteUrl}" th:text="#{email.footer.site}"
+                               style="color:#0f766e; text-decoration:none;">5goodmins.com</a>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>

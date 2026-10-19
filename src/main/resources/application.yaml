@@ -86,6 +86,22 @@ spring:
     properties:
       hibernate.jdbc.time_zone: UTC
 
+  # No spring.messages.* here: shared/MessageSourceConfig declares the
+  # MessageSource itself, which makes Boot's auto-configuration back off and
+  # these properties inert. See that class for why it has to.
+
+  task:
+    execution:
+      # `force` keeps Boot's applicationTaskExecutor even though this
+      # application defines an Executor of its own (EmailConfig's mail pool,
+      # ADR-005). Without it, TaskExecutionAutoConfiguration backs off -- its
+      # condition is @ConditionalOnMissingBean(Executor.class) -- and the mail
+      # pool silently becomes the default for Spring MVC's async request
+      # handling. That is the opposite of giving email a pool of its own: a
+      # single thread behind a fifty-deep queue, sized for one SMTP call at a
+      # time, would be serving the web layer.
+      mode: force
+
 # app.token.secret is deliberately absent, for the same reason the datasource
 # above is: a committed default would be a published signing key, and every
 # email verification and unsubscribe link in production would be forgeable by
@@ -96,3 +112,20 @@ spring:
 # application-dev.yaml, tests from src/test/resources/application.properties.
 # See SignedTokenProperties for the key's requirements and what rotating it
 # costs.
+
+# app.mail.from and app.mail.base-url are absent for the same reason, and the
+# same reason again: a committed default would be a plausible wrong value that
+# fails days later in someone's inbox rather than at startup. Mail from an
+# address this domain is not authorised to send for goes to spam and damages the
+# reputation every later digest depends on, and a base-url left at localhost
+# puts a dead link in a real mailbox.
+#
+# Production supplies APP_MAIL_FROM and APP_MAIL_BASE_URL (and optionally
+# APP_MAIL_FROM_NAME). Local runs get them from application-dev.yaml, tests from
+# src/test/resources/application.properties. See EmailProperties.
+#
+# spring.mail.* is absent too, but that one is not required: with no mail host
+# configured there is no JavaMailSender, and EmailConfig supplies a sender that
+# refuses loudly instead of one that silently discards. That is the state
+# production is in until the provider is chosen (section 5, week 7); the site
+# still starts and serves every page that does not send email.
