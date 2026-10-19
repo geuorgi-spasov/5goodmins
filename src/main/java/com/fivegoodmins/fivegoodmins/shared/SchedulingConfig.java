@@ -14,10 +14,20 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * horizontal scaling, and it is accepted knowingly for the MVP rather than
  * overlooked.
  *
+ * <p><strong>"One instance" is false during a deploy.</strong> Railway brings
+ * the new container up, waits for it to pass its health check, and only then
+ * drains the old one, so for that overlap two processes are running the same
+ * schedule. A deploy that straddles 03:00 can therefore send the digest
+ * twice -- not a theoretical second replica, the ordinary way this
+ * application ships. Two consequences, both cheap: do not deploy near the
+ * job times, and prefer jobs that do not care. The purge does not care, since
+ * running it twice deletes nothing the first pass left; the digest very much
+ * will, which is the argument for a lock landing with it rather than after.
+ *
  * <p>The fix when it matters is ShedLock or a Postgres advisory lock around
  * each job, or moving the scheduled work to a separate single-replica
  * deployment. Not now: it is infrastructure for a problem one Railway service
- * does not have.
+ * does not have, outside the minutes in which it does.
  *
  * <p>A configuration class of its own rather than the annotation on
  * {@code FivegoodminsApplication}, so that the paragraph above has somewhere

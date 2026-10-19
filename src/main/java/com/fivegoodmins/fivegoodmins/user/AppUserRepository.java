@@ -25,7 +25,7 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
      *
      * <p><strong>A bulk statement, not a derived {@code deleteBy...} query.</strong>
      * The derived form selects the matching rows into the persistence context
-     * and issues one DELETE each, which is the pattern CLAUDE.md rejects for
+     * and issues one DELETE each, which is the pattern ADR-015 rejects for
      * JPA-side cascading and is no better here: the set is unbounded -- it is
      * however many stale registrations accumulated -- and nothing in this
      * transaction needs the entities. One statement, bounded memory.

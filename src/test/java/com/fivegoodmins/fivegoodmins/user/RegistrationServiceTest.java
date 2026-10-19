@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
@@ -60,7 +61,7 @@ class RegistrationServiceTest {
     SignedTokenService tokens;
 
     @Autowired
-    PasswordEncoder passwordEncoder;
+    CountingPasswordEncoder passwordEncoder;
 
     @Autowired
     MutableClock clock;
@@ -74,6 +75,7 @@ class RegistrationServiceTest {
         // two: a fixed date here would make the cutoff arithmetic depend on
         // what day the suite runs.
         clock.set(Instant.now());
+        passwordEncoder.resetCount();
     }
 
     private RegistrationOutcome.Registered register(String email, String password, String name) {
@@ -171,16 +173,34 @@ class RegistrationServiceTest {
     }
 
     @Test
-    void offersTheResendPathForALinkThatOnlyRanOutOfTime() {
+    void sendsAUserWhoseLinkAgedOutBackToRegistrationRatherThanToAResend() {
         RegistrationOutcome.Registered registered = register(ADDRESS, PASSWORD, "Georgi");
 
         clock.advance(TokenPurpose.EMAIL_VERIFICATION.ttl().plusSeconds(1));
 
-        // Expired, not Invalid: the signature was checked first, so this is
-        // known to be a link this application really sent and it is safe to
-        // answer with "we will send another one".
+        // DeadLink rather than a separate Expired, because the row this names
+        // is already past the purge cutoff -- the two windows are the same
+        // seven days -- so a resent link would die at the next nightly run.
+        // Registering again replaces the row and issues a fresh token, which
+        // is what a resend would have had to do anyway.
         assertThat(registrations.verifyEmail(registered.verificationToken()))
-                .isEqualTo(new EmailVerificationOutcome.Expired());
+                .isEqualTo(new EmailVerificationOutcome.DeadLink());
+        assertThat(users.findByEmail(ADDRESS).orElseThrow().isEmailVerified()).isFalse();
+    }
+
+    @Test
+    void tellsSomeoneReclickingAnOldConfirmedLinkThatTheyAreAlreadyDone() {
+        RegistrationOutcome.Registered registered = register(ADDRESS, PASSWORD, "Georgi");
+        registrations.verifyEmail(registered.verificationToken());
+
+        clock.advance(TokenPurpose.EMAIL_VERIFICATION.ttl().plusDays(2));
+
+        // The case that makes TokenVerification.Expired carry a user id.
+        // Answering from the expiry alone would say "register again", and
+        // registering again returns AddressTaken and mails nothing -- a loop
+        // ending at "check your inbox" for an email that never arrives.
+        assertThat(registrations.verifyEmail(registered.verificationToken()))
+                .isEqualTo(new EmailVerificationOutcome.AlreadyVerified(registered.userId()));
     }
 
     @Test
@@ -206,15 +226,15 @@ class RegistrationServiceTest {
     }
 
     @Test
-    void reportsAnAuthenticLinkWhoseAccountIsGoneAsSomethingOtherThanExpired() {
+    void reportsAnAuthenticLinkWhoseAccountIsGoneAsDead() {
         RegistrationOutcome.Registered registered = register(ADDRESS, PASSWORD, "Georgi");
         users.deleteById(registered.userId());
         users.flush();
 
-        // The remedy differs from Expired: there is no row to resend to, so
-        // the only honest answer is "register again".
+        // Still in date, so this is the lookup rather than the expiry
+        // answering: an authentic token is not a promise that the row exists.
         assertThat(registrations.verifyEmail(registered.verificationToken()))
-                .isEqualTo(new EmailVerificationOutcome.NoSuchAccount());
+                .isEqualTo(new EmailVerificationOutcome.DeadLink());
     }
 
     // -----------------------------------------------------------------------
@@ -250,7 +270,7 @@ class RegistrationServiceTest {
         // password belongs to someone else.
         assertThat(squatter.userId()).isNotEqualTo(owner.userId());
         assertThat(registrations.verifyEmail(squatter.verificationToken()))
-                .isEqualTo(new EmailVerificationOutcome.NoSuchAccount());
+                .isEqualTo(new EmailVerificationOutcome.DeadLink());
         assertThat(registrations.verifyEmail(owner.verificationToken()))
                 .isEqualTo(new EmailVerificationOutcome.Verified(owner.userId()));
     }
@@ -271,6 +291,40 @@ class RegistrationServiceTest {
         assertThat(row.getId()).isEqualTo(owner.userId());
         assertThat(row.getDisplayName()).isEqualTo("Georgi");
         assertThat(passwordEncoder.matches(PASSWORD, row.getPasswordHash())).isTrue();
+    }
+
+    // -----------------------------------------------------------------------
+    // What the two registration outcomes have to have in common
+    // -----------------------------------------------------------------------
+
+    @Test
+    void hashesAPasswordEvenForAnAddressItIsAboutToRefuse() {
+        RegistrationOutcome.Registered owner = register(ADDRESS, PASSWORD, "Georgi");
+        registrations.verifyEmail(owner.verificationToken());
+        passwordEncoder.resetCount();
+
+        assertThat(registrations.register(ADDRESS, "an-attackers-password", "Not Georgi"))
+                .isEqualTo(new RegistrationOutcome.AddressTaken());
+
+        // Asserted structurally rather than with a stopwatch: a timing test
+        // is a flaky test, and what is actually being promised is that the
+        // expensive call happens on both paths. BCrypt is ~100ms against a
+        // millisecond of everything else, so skipping it here would make
+        // response time the answer to "does this address have an account?" --
+        // and undo, with a stopwatch, the identical page the two outcomes
+        // deliberately render.
+        assertThat(passwordEncoder.count()).isOne();
+    }
+
+    @Test
+    void hashesAPasswordExactlyOnceOnTheRegisteringPathToo() {
+        passwordEncoder.resetCount();
+
+        register(ADDRESS, PASSWORD, "Georgi");
+
+        // The other half of the pair: equal cost means equal, not merely
+        // non-zero on both sides.
+        assertThat(passwordEncoder.count()).isOne();
     }
 
     // -----------------------------------------------------------------------
@@ -381,14 +435,48 @@ class RegistrationServiceTest {
         }
 
         /**
-         * The production encoder, deliberately. A no-op one would run faster
-         * and would also stop these tests from noticing the day
-         * {@code password_hash} is too short for the algorithm in use, which
-         * is a failure the migration's comment is specifically about.
+         * The production encoder, deliberately, with a counter around it. A
+         * no-op one would run faster and would also stop these tests from
+         * noticing the day {@code password_hash} is too short for the
+         * algorithm in use, which is a failure the migration's comment is
+         * specifically about.
          */
         @Bean
-        PasswordEncoder passwordEncoder() {
-            return PasswordEncoderFactories.createDelegatingPasswordEncoder();
+        CountingPasswordEncoder passwordEncoder() {
+            return new CountingPasswordEncoder(PasswordEncoderFactories.createDelegatingPasswordEncoder());
+        }
+    }
+
+    /**
+     * Counts {@code encode} calls, so that "both paths pay the same cost" can
+     * be asserted as a fact about the code rather than measured as a duration.
+     */
+    static final class CountingPasswordEncoder implements PasswordEncoder {
+
+        private final PasswordEncoder delegate;
+        private final AtomicInteger encodes = new AtomicInteger();
+
+        CountingPasswordEncoder(PasswordEncoder delegate) {
+            this.delegate = delegate;
+        }
+
+        int count() {
+            return encodes.get();
+        }
+
+        void resetCount() {
+            encodes.set(0);
+        }
+
+        @Override
+        public String encode(CharSequence rawPassword) {
+            encodes.incrementAndGet();
+            return delegate.encode(rawPassword);
+        }
+
+        @Override
+        public boolean matches(CharSequence rawPassword, String encodedPassword) {
+            return delegate.matches(rawPassword, encodedPassword);
         }
     }
 

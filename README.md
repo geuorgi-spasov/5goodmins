@@ -86,6 +86,14 @@ accepted knowingly for the MVP. The fix when it matters is ShedLock or a
 PostgreSQL advisory lock around each job, or moving the scheduled work to a
 separate single-replica deployment.
 
+**That assumption is false during a deploy.** Railway starts the new container,
+waits for its health check, and only then drains the old one — so two processes
+briefly run the same schedule, on every deploy rather than only when someone
+scales up. **Do not deploy within a few minutes of 03:00 or 03:30 UTC.** The
+purge tolerates it (running it twice deletes nothing the first pass left); the
+daily digest will not, so the lock above stops being optional on the day the
+digest ships.
+
 ---
 
 ## Configuration

@@ -150,7 +150,7 @@ public class SignedTokenService {
         }
 
         if (!clock.instant().isBefore(Instant.ofEpochSecond(expiry))) {
-            return new TokenVerification.Expired();
+            return new TokenVerification.Expired(userId);
         }
         return new TokenVerification.Valid(userId);
     }

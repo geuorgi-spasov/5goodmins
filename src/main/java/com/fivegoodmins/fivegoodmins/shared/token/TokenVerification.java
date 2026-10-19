@@ -27,8 +27,20 @@ public sealed interface TokenVerification {
      */
     record Valid(long userId) implements TokenVerification { }
 
-    /** The signature held, so the expiry is genuine, and it has passed. */
-    record Expired() implements TokenVerification { }
+    /**
+     * The signature held, so the expiry is genuine, and it has passed.
+     *
+     * @param userId app_user.id, as signed. Carried for the same reason
+     *               {@link Valid} carries it and with the same confidence: the
+     *               signature is checked before the expiry is read, so this id
+     *               is authentic whether or not the token is still in date.
+     *               Without it a caller cannot tell an aged-out link belonging
+     *               to an account that has since been confirmed from one whose
+     *               account is gone -- and those two want opposite things on
+     *               the screen. Subject to the same caveat as {@link Valid}:
+     *               authentic is not the same as still present.
+     */
+    record Expired(long userId) implements TokenVerification { }
 
     /**
      * Not a token this application issued under this purpose: wrong shape,

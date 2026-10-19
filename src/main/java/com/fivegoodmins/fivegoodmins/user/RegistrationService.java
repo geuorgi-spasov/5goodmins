@@ -170,6 +170,22 @@ public class RegistrationService {
         String name = requireValidDisplayName(displayName);
         requireUsablePassword(rawPassword);
 
+        // Encoded before the lookup, deliberately, and thrown away on the
+        // AddressTaken path below. BCrypt is ~100ms and everything else here
+        // is a millisecond, so doing it only for addresses that are free
+        // would make the response time the answer to "does this address have
+        // an account?" -- the identical page the two paths render would be
+        // undone by a stopwatch. Paying the cost on both paths is the same
+        // defence DaoAuthenticationProvider uses at login, where it hashes a
+        // dummy password for users it did not find.
+        //
+        // What this does not equalise: the writes. A free address inserts, a
+        // taken-over one deletes and inserts, a verified one writes nothing.
+        // Those differ by around a millisecond against a shared 100, which is
+        // inside the noise of a network round trip -- unlike the gap this
+        // closes, which was the whole hundred.
+        String encodedPassword = passwordEncoder.encode(rawPassword);
+
         Optional<AppUser> existing = users.findByEmail(address);
         if (existing.isPresent()) {
             AppUser occupant = existing.get();
@@ -184,8 +200,7 @@ public class RegistrationService {
         }
 
         Instant now = clock.instant();
-        AppUser registered = users.saveAndFlush(
-                new AppUser(address, passwordEncoder.encode(rawPassword), name, now));
+        AppUser registered = users.saveAndFlush(new AppUser(address, encodedPassword, name, now));
         // saveAndFlush, not save: the id is needed for the token on the next
         // line, and an id read before the INSERT has reached the database is
         // an id that may yet be rolled back into a link somebody received.
@@ -206,6 +221,14 @@ public class RegistrationService {
      * email (ADR-005) from going out twice when a mail client prefetches the
      * link and the user then clicks it.
      *
+     * <p><strong>An expired token is still looked up.</strong> It would be
+     * cheaper to answer from the expiry alone, and it would be wrong for the
+     * one case that actually happens: someone confirming on day one and
+     * clicking the same link again on day nine. The signature was checked
+     * before the expiry was read, so the id on an expired token is as
+     * authentic as the id on a valid one -- it is worth one query to tell
+     * "your address is already confirmed" from "that link is dead".
+     *
      * <p>A valid signature does not imply a row. The account may have been
      * purged, superseded by a re-registration, or deleted (ADR-015) since the
      * link was sent, so the lookup can legitimately come back empty.
@@ -214,28 +237,43 @@ public class RegistrationService {
     public EmailVerificationOutcome verifyEmail(String token) {
         return switch (tokens.verify(token, VERIFICATION)) {
             case TokenVerification.Invalid ignored -> {
-                // The only case worth logging: expired links are ordinary, a
+                // The only case worth logging: an aged-out link is ordinary, a
                 // bad signature is either a mangled copy-paste or a probe. The
                 // token itself is not logged -- a valid one in a log file is a
                 // verification somebody else can perform.
                 log.warn("rejected an email verification token that failed its signature");
                 yield new EmailVerificationOutcome.Invalid();
             }
-            case TokenVerification.Expired ignored -> new EmailVerificationOutcome.Expired();
-            case TokenVerification.Valid(long userId) -> verifyAccount(userId);
+            case TokenVerification.Valid(long userId) -> confirm(userId, true);
+            case TokenVerification.Expired(long userId) -> confirm(userId, false);
         };
     }
 
-    private EmailVerificationOutcome verifyAccount(long userId) {
+    /**
+     * @param inDate whether the token is still within its seven days. An
+     *               out-of-date one can report an account that is already
+     *               confirmed, but it cannot confirm one.
+     */
+    private EmailVerificationOutcome confirm(long userId, boolean inDate) {
         Optional<AppUser> found = users.findById(userId);
         if (found.isEmpty()) {
             log.info("email verification names account {}, which no longer exists", userId);
-            return new EmailVerificationOutcome.NoSuchAccount();
+            return new EmailVerificationOutcome.DeadLink();
         }
 
         AppUser user = found.get();
         if (user.isEmailVerified()) {
+            // Before the expiry check, so that re-clicking an old link that
+            // already did its job is answered with the truth rather than with
+            // "register again".
             return new EmailVerificationOutcome.AlreadyVerified(userId);
+        }
+        if (!inDate) {
+            // Authentic, unconfirmed, and out of time. The row is already past
+            // the purge cutoff -- the two windows are the same seven days --
+            // so it survives at most until the next nightly run and there is
+            // nothing worth resending to it.
+            return new EmailVerificationOutcome.DeadLink();
         }
 
         // markEmailVerified writes email_verified_at once and ignores later
