@@ -34,7 +34,15 @@ server:
   # configured to add Strict-Transport-Security itself and would mask the
   # answer. If HSTS is missing there, the fix is
   # server.tomcat.remoteip.internal-proxies scoped to the address that shows up
-  # in the access log, never `.*` and never a switch to `framework`.
+  # in the access log, never `.*` and never a switch to `framework` -- and note
+  # that setting that property REPLACES the default list above rather than
+  # extending it, so whatever Railway's hop needs has to be in the new value.
+  #
+  # The rate limiting work needs one more property here: Cloudflare's published
+  # ranges in server.tomcat.remoteip.trusted-proxies, without which the valve
+  # stops at the Cloudflare edge and every request shares one bucket. Settled
+  # in ADR-002 ("the bucket key"), which also names the hop that same curl
+  # verifies: whether Railway appends to X-Forwarded-For or passes it through.
   forward-headers-strategy: native
 
   # Production values for the session cookie; application-dev.yaml relaxes
