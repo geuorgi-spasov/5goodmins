@@ -132,7 +132,7 @@ valid title.
 |---|---|---|
 | 6 | **Register** | Email, password, password confirmation, display name, consent checkbox for the privacy policy. |
 | 7 | **Login** | Email, password. Errors are deliberately vague ("wrong email or password"). |
-| 8 | **Verification notice / result** | "Check your inbox", plus the page the emailed link lands on. Three result states, and **none of them offers to resend** (ADR-002 cut the resend form): **confirmed** — success, link to log in; **already confirmed** — same reassuring tone, not an error, since a second click or a mail client prefetching the link is ordinary; **dead link** — the link expired or the unconfirmed account was purged after seven days, so the only action is a link back to Register, which re-issues a fresh email. The "check your inbox" state must also be what a user sees after registering an address that already has a confirmed account — identical page, identical wording, so the form cannot be used to discover who has an account here. |
+| 8 | **Verification notice / result** | "Check your inbox", plus the page the emailed link lands on. Three result states, and **none of them offers to resend** (ADR-002 cut the resend form): **confirmed** — success, link to log in; **already confirmed** — same reassuring tone, not an error, since a second click or a mail client prefetching the link is ordinary; **dead link** — the link expired or the unconfirmed account was purged after seven days, so the only action is a link back to Register, which re-issues a fresh email. The "check your inbox" state must also be what a user sees after registering an address that already has a confirmed account — identical page, identical wording, so the form cannot be used to discover who has an account here. **This page carries the only recovery there is — see below.** |
 | 9 | **Unsubscribe confirmation** | Reached from a digest email link, **works without login**. One page: confirm, done. |
 
 ### Signed in
@@ -187,7 +187,36 @@ link to opt out of the thing the user is in the middle of doing.
    missing reset is visible to a user, and this email is where it goes when it
    lands.
 
-The two that exist are a starting point, not a design — redesign them freely.
+#### Page 8 must say what to do when the email does not arrive
+
+**This is the most load-bearing copy in the MVP, and it is the one piece of it
+that cannot be left to the layout.** There is no resend form and there will not
+be one (ADR-002): registering again over an unconfirmed address replaces the
+row and sends a fresh link, so it already *is* a resend. That is only true for
+a user who knows it, and right now the page would say "check your inbox", the
+email would not arrive, and nothing would tell them what to do next. The
+registration also cannot be undone from their side, so the dead end is total.
+
+The strings exist — use them, do not write new ones:
+
+| Key | Where |
+|---|---|
+| `verification.notice.heading` | the page heading |
+| `verification.notice.sent` | one argument: the address **as the user typed it**. Echoing it back is how a typo gets caught, and it leaks nothing — they typed it. |
+| `verification.notice.expiry` | one argument: the number of days, passed in from `TokenPurpose.EMAIL_VERIFICATION`, never typed into the template |
+| `verification.notice.spam` | the first thing to check, because a new sending domain is exactly what lands in spam |
+| `verification.notice.resend` + `verification.notice.resendLink` | the recovery: register again with the same address. The link goes back to page 6. |
+
+Two things not to do with it. Do not present it as an error state — most people
+find the email and never read this. And do not put the recovery behind a
+disclosure widget or a "having trouble?" link: the person who needs it is the
+person for whom the page already appears to have failed, and they will not go
+looking.
+
+The **dead link** state reuses `verification.notice.resend` and
+`verification.notice.resendLink` for the same reason, with its own heading.
+
+The two emails that exist are a starting point, not a design — redesign them freely.
 What must not change: every string stays in `messages_bg` / `messages_en`, the
 `.txt` twin stays in step with its HTML, and nothing user-supplied goes in a
 subject line (a newline in a display name is header injection).

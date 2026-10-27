@@ -60,9 +60,14 @@ import java.util.Map;
  * account should not be undone because a mail provider was briefly down -- and
  * is therefore only as good as its logging. Both failure modes are logged with
  * the user id: the send that threw, and the send that was never attempted.
- * With no resend form (ADR-002), the user's recovery is to register again, and
- * the rate limit on {@code /register} is what keeps that from being a way to
- * flood a mailbox.
+ *
+ * <p><strong>The user's half of that has to exist too.</strong> With no resend
+ * form (ADR-002), their recovery is to register again -- which replaces the
+ * row and issues a fresh link, so it really is a resend -- and the rate limit
+ * on {@code /register} is what keeps it from being a way to flood a mailbox.
+ * A recovery nobody is told about is not one, so the "check your inbox" page
+ * carries it (frontend brief, page 8; the strings are
+ * {@code verification.notice.spam} and {@code verification.notice.resend}).
  */
 @Component
 class RegistrationEmailListener {

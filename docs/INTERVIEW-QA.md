@@ -647,6 +647,64 @@ piece of infrastructure used twice. Unverified accounts are purged after seven
 days, and re-registration over an unverified row is allowed so nobody can
 squat someone else's address.
 
+### Q: What happens if the verification email fails to send? **[DEEP]**
+
+Four things, in this order.
+
+The account stays. It was committed before the send was attempted — that is
+what `@TransactionalEventListener(AFTER_COMMIT)` is for — and undoing a correct
+registration because a mail provider had a bad minute would be the wrong
+trade. The send is also off the request thread, so the user is not waiting on
+it either way.
+
+The failure is logged with the account id. Two different failures, both named:
+the send that threw, and the send that was never attempted because the mail
+queue was full. The second one is the interesting half — I had it with
+`@Async` first, and when I filled the queue the rejection turned out to be
+thrown at *submit* time, inside Spring's transaction synchronization, where it
+is logged as an anonymous "afterCompletion threw exception" with no account id,
+because the event is out of scope by then. Neither the listener's catch nor an
+`AsyncUncaughtExceptionHandler` sees it. So I submit to the executor by hand
+and catch `TaskRejectedException` where the event still exists.
+
+The user recovers by registering again, and **the page tells them to.** There
+is no resend form, deliberately: registering again over an unconfirmed address
+replaces the row and issues a fresh link, so it already is a resend, and a
+separate form would be a second entry point to one operation needing its own
+per-address limit, cooldown and daily cap. The honest part of that answer is
+that the decision was only sound because of copy on a page — "check spam, or
+register again with the same address" — and when I made it, that page did not
+exist and nothing was tracking it. A recovery the user cannot discover is not a
+recovery.
+
+And at scale I would move to a transactional outbox: write the pending email to
+a table in the same transaction as the user, let a job send it with backoff and
+mark it done. The outage becomes invisible and survives a restart. It costs a
+table, a job, a retry policy and cleanup, which is not worth it at this volume
+— but naming it is the difference between "I did not build retries" being a
+decision and being an omission.
+
+### Q: Could you resend the link when an unverified user tries to log in? **[DEEP]**
+
+Yes, and it is the best version of this — no new form, and it costs a correct
+password to trigger, so it cannot be used to flood someone else's mailbox. It
+is not free, though, and the reason is interesting.
+
+The unverified check currently lives in `loadUserByUsername`, above Spring
+Security's own status checks, so that every reason not to log in leaves through
+one `UsernameNotFoundException` and an unverified account is indistinguishable
+from an unknown one. Resending requires knowing the password was right, so the
+gate has to move to where that is known: `setPostAuthenticationChecks` on the
+provider, which runs after `additionalAuthenticationChecks` — the password
+comparison.
+
+The naive version is the one to be able to reject out loud: map
+`email_verified_at IS NULL` onto `isEnabled() == false` and let Spring Security
+block it. The pre-authentication checks run before the password is compared, so
+an unverified address answers `DisabledException` for *any* password, and the
+login form becomes an account enumeration oracle. On a site whose users are
+activists, "does this person have an account here" is not a harmless fact.
+
 ### Q: Why no `Organization` entity? **[WARM]**
 
 `User` plus a `POSTER` role plus profile fields expresses everything the MVP
