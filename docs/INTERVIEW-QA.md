@@ -1060,3 +1060,98 @@ test suite that cannot distinguish "this works" from "this was never executed"
 is not a test suite. The repository now has a `@DataJpaTest` that exercises both
 of its query methods against a real PostgreSQL, so the bean's absence would fail
 the build.
+
+---
+
+## 17. Email delivery and the mail pool
+
+Everything here was learned by running it, which is the only reason it is worth
+saying out loud.
+
+### Q: `corePoolSize=1, maxPoolSize=2, queueCapacity=50` — how many threads does that pool use? **[COLD]**
+
+One. `ThreadPoolExecutor` only creates a thread beyond the core size when the
+queue is **full**, so with fifty slots in front of it the second thread appears
+on the fifty-first simultaneous task and never otherwise. A maximum above the
+core size with a non-trivial queue describes a pool that does not exist.
+
+I wrote exactly that configuration and described it in a comment as two
+threads. The fix was to make it honest rather than to make it two: one thread
+is right for one SMTP round trip at a time, so it is now core 1, max 1. If the
+digest ever needs concurrency, both numbers move together.
+
+The order the executor applies is worth having ready: use a core thread if one
+is free, else **queue**, else grow to max, else reject. People expect "grow,
+then queue".
+
+### Q: What is wrong with Spring Boot's default `@Async` executor? **[WARM]**
+
+Not what the usual answer says. The common claim is that `@Async` falls back to
+`SimpleAsyncTaskExecutor` and starts a thread per call — that is Spring's
+behaviour without Boot. Boot's `TaskExecutionAutoConfiguration` provides
+`applicationTaskExecutor`, a `ThreadPoolTaskExecutor`, and `@Async` uses it.
+
+The real hazard is that pool's **unbounded queue** (`queue-capacity` defaults to
+`Integer.MAX_VALUE`). A mail provider that stops responding accumulates tasks
+until the heap goes, and the symptom surfaces somewhere unrelated because the
+same pool serves everything. So email gets a small pool with a bounded queue,
+where the failure is a rejected task at a known moment rather than a slow leak.
+
+With `spring.threads.virtual.enabled` the default *is* a
+`SimpleAsyncTaskExecutor` — on virtual threads, still unbounded, in a different
+way.
+
+### Q: You defined your own executor. What did that quietly break? **[DEEP]**
+
+Boot's. `TaskExecutionAutoConfiguration` is conditional on there being no
+`Executor` bean at all, so defining `emailExecutor` removes
+`applicationTaskExecutor` — and then a single-threaded pool with a fifty-deep
+queue, sized for one SMTP call at a time, becomes what Spring MVC uses for
+async request handling and what any unqualified `@Async` picks up.
+
+`spring.task.execution.mode=force` keeps both. It is one line of configuration
+standing in for a bug that would have surfaced much later, in something
+unrelated to email, and a test asserts the bean still exists so deleting that
+line fails the build.
+
+### Q: You dropped `@Async`. Why? **[DEEP]**
+
+Because of where a rejection ends up. With `@Async`, the submit to the executor
+happens inside the proxy, which here is inside Spring's transaction
+synchronization — so when the queue is full, `TaskRejectedException` is thrown
+past the listener and lands in `TransactionSynchronizationUtils`, which logs
+"TransactionSynchronization.afterCompletion threw exception" and a stack trace.
+No account id, no address, nothing saying it was an email, because the event is
+out of scope by then. Neither the listener's `catch` nor an
+`AsyncUncaughtExceptionHandler` covers it; both only see failures *inside* the
+task.
+
+I found that by filling the queue and reading the log, not by reasoning about
+it. The listener now calls `emailExecutor.execute(...)` itself and catches the
+rejection where the event still exists, so the line reads "mail queue full, no
+Verification email sent for account 7". The cost is that the committing thread
+does the submitting — microseconds, and on both registration paths equally, so
+the timing oracle stays closed.
+
+The general lesson is the one I would lead with: an annotation moves work to
+another thread *and* moves the failure to another place, and the second half is
+the one nobody checks.
+
+### Q: Anything else that bit you in that commit? **[WARM]**
+
+Two framework behaviours, both of which fail at startup rather than quietly,
+which is the only reason they were cheap.
+
+A `@Configuration` class with `@Bean` methods cannot implement
+`AsyncConfigurer` under Boot 4: a bean post-processor wraps every
+`AsyncConfigurer` to supply the default executor, and the wrapped object is
+then not an instance of the configuration class, so the context fails with
+"Illegal factory instance for factory method".
+
+And there was no `MessageSource` at all. Boot's auto-configuration is behind a
+condition that resolves `classpath*:messages.properties`, and this project
+deliberately ships only `messages_bg` and `messages_en` — no default-locale
+bundle — so the condition never matched and the context fell back to a
+`DelegatingMessageSource` that resolves nothing. That one did *not* fail at
+startup: it failed when the first email rendered, on a pool thread. It is now
+declared by hand.

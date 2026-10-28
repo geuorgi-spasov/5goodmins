@@ -2,16 +2,19 @@
 
 For the frontend contributor. Read alongside `ARCHITECTURE.md`; where the two
 disagree, `ARCHITECTURE.md` wins and this file gets corrected. Last reconciled
-against ARCHITECTURE.md Rev 7 (2026-10-11): statuses, the optional outbound
-link, and the reports queue were all stale.
+against ARCHITECTURE.md Rev 16 (2026-10-19): the email count went from three to
+four, two of them are now built, and page 8 gained the recovery copy that the
+absence of a resend form depends on. The previous pass was Rev 7 (2026-10-11),
+which corrected statuses, the optional outbound link and the reports queue.
 
 **In one line:** a Bulgarian-language directory of small activism actions —
 petitions, emails to officials, surveys — that users browse by category and
 region, subscribe to, and receive as a daily email digest. Every action links
 out to an external site. We host no petitions ourselves.
 
-**Size of the job:** ~20 page templates, ~15 reusable fragments, 3 email
-templates for the MVP.
+**Size of the job:** ~20 page templates, ~15 reusable fragments, 4 email
+templates for the MVP — two of which exist already, as working HTML you are
+free to redesign (see section 4).
 
 ---
 
@@ -321,7 +324,8 @@ Everything below ships in the first release.
 - Bulgarian / English interface switching
 - Responsive layout + web app manifest (installable)
 - Error pages: 404, 403, 500
-- 3 email templates
+- 4 email templates (verification and "you already have an account" are built;
+  welcome and the daily digest are not)
 - Static pages: About, Privacy
 
 ## 10. v1.1 — before real users
