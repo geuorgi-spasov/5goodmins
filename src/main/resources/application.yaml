@@ -67,10 +67,6 @@ server:
 spring:
   application:
     name: fivegoodmins
-  datasource:
-    url: ${JDBC_DATABASE_URL}
-    username: ${PGUSER}
-    password: ${PGPASSWORD}
 
   # No datasource here on purpose. A committed localhost default made a missing
   # SPRING_DATASOURCE_URL in production look like a dead database -- "Connection
