@@ -2,10 +2,28 @@
 
 For the frontend contributor. Read alongside `ARCHITECTURE.md`; where the two
 disagree, `ARCHITECTURE.md` wins and this file gets corrected. Last reconciled
-against ARCHITECTURE.md Rev 16 (2026-10-19): the email count went from three to
-four, two of them are now built, and page 8 gained the recovery copy that the
-absence of a resend form depends on. The previous pass was Rev 7 (2026-10-11),
-which corrected statuses, the optional outbound link and the reports queue.
+against ARCHITECTURE.md Rev 19 (2026-10-28): **pages 6, 7 and 8 now have
+working backends and placeholder front ends.** The pass before that was Rev 16
+(2026-10-19), which took the email count from three to four and gave page 8 the
+recovery copy that the absence of a resend form depends on.
+
+**Pages 6, 7 and 8 are yours to design — the templates there are not a
+design.** They are unstyled structural placeholders, written so the controllers
+have something to render and so the behaviour could be tested: no stylesheet,
+no class attributes, no layout, no font choice, no fragments. Section 5's field
+fragment and everything in section 7 are still open, and the UI copy on pages 6
+and 7 is placeholder editorial you should rewrite. Delete and rebuild the markup
+freely.
+
+What must survive, because the backend depends on it, is listed in a comment at
+the top of each of those four template files. In summary: forms use `th:action`
+rather than `action`, or the CSRF input is absent and every submission is a
+silent 403; the `th:field` bindings and their `th:errors` stay paired; the
+consent checkbox stays inside its label, because Thymeleaf renders a bound
+checkbox as `id="privacyAccepted1"` and a hand-written `for=` dangles; every
+string stays in the bundles; the two registration outcomes keep rendering the
+identical page; and page 8 keeps saying, out in the open rather than behind a
+disclosure, how to recover from an email that never arrived.
 
 **In one line:** a Bulgarian-language directory of small activism actions —
 petitions, emails to officials, surveys — that users browse by category and
@@ -133,9 +151,9 @@ valid title.
 
 | # | Page | Notes |
 |---|---|---|
-| 6 | **Register** | Email, password, password confirmation, display name, consent checkbox for the privacy policy. |
-| 7 | **Login** | Email, password. Errors are deliberately vague ("wrong email or password"). |
-| 8 | **Verification notice / result** | "Check your inbox", plus the page the emailed link lands on. Three result states, and **none of them offers to resend** (ADR-002 cut the resend form): **confirmed** — success, link to log in; **already confirmed** — same reassuring tone, not an error, since a second click or a mail client prefetching the link is ordinary; **dead link** — the link expired or the unconfirmed account was purged after seven days, so the only action is a link back to Register, which re-issues a fresh email. The "check your inbox" state must also be what a user sees after registering an address that already has a confirmed account — identical page, identical wording, so the form cannot be used to discover who has an account here. **This page carries the only recovery there is — see below.** |
+| 6 | **Register** | *Backend built, design yours.* Email, password, password confirmation, display name, consent checkbox for the privacy policy. |
+| 7 | **Login** | *Backend built, design yours.* Email, password. Errors are deliberately vague ("wrong email or password"). |
+| 8 | **Verification notice / result** | *Backend built, design yours.* "Check your inbox", plus the page the emailed link lands on. Three result states, and **none of them offers to resend** (ADR-002 cut the resend form): **confirmed** — success, link to log in; **already confirmed** — same reassuring tone, not an error, since a second click or a mail client prefetching the link is ordinary; **dead link** — the link expired or the unconfirmed account was purged after seven days, so the only action is a link back to Register, which re-issues a fresh email. The "check your inbox" state must also be what a user sees after registering an address that already has a confirmed account — identical page, identical wording, so the form cannot be used to discover who has an account here. **This page carries the only recovery there is — see below.** |
 | 9 | **Unsubscribe confirmation** | Reached from a digest email link, **works without login**. One page: confirm, done. |
 
 ### Signed in
@@ -200,7 +218,7 @@ a user who knows it, and right now the page would say "check your inbox", the
 email would not arrive, and nothing would tell them what to do next. The
 registration also cannot be undone from their side, so the dead end is total.
 
-The strings exist — use them, do not write new ones:
+The strings exist and are now on the page — use them, do not write new ones:
 
 | Key | Where |
 |---|---|

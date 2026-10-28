@@ -73,13 +73,15 @@ class SecurityHeadersTest {
 
     @Test
     void servesTheLoginPageItRedirectsTo() throws Exception {
-        // anyRequest().authenticated() covers /login too, so the only reason
-        // the redirect above is not a loop is that
-        // DefaultLoginPageGeneratingFilter sits ahead of the authorization
-        // filter and completes the response itself. Worth asserting rather
-        // than reasoning about: the day loginPage() names a controller-backed
-        // template, that filter stops answering and the rule has to permit the
-        // path explicitly.
+        // anyRequest().authenticated() covers /login too, so the reason the
+        // redirect above is not a loop is that the path is permitted
+        // explicitly. It used to be that DefaultLoginPageGeneratingFilter sat
+        // ahead of the authorization filter and answered on its own; that
+        // filter stopped answering the moment loginPage() named
+        // LoginController's template, which is exactly the day this assertion
+        // was written for. What it checks now is that something still serves
+        // the path the redirect points at -- see LoginWebTest for the page
+        // itself.
         HttpResponse<String> response = get("/login");
 
         assertThat(response.statusCode()).isEqualTo(200);

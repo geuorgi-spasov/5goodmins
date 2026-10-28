@@ -1,11 +1,16 @@
 package com.fivegoodmins.fivegoodmins.shared;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.jspecify.annotations.Nullable;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.DispatcherServlet;
 import org.springframework.web.servlet.LocaleResolver;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.web.servlet.i18n.CookieLocaleResolver;
+import org.springframework.web.servlet.i18n.LocaleChangeInterceptor;
 
 import java.time.Duration;
 import java.util.Enumeration;
@@ -40,10 +45,17 @@ import java.util.Locale;
  * still honoured for a first visit, so a Bulgarian browser gets Bulgarian and
  * an English one gets English without anybody clicking anything.
  *
- * <p>The switcher itself -- a {@code LocaleChangeInterceptor} or a small
- * controller writing the cookie -- lands with the first templates. This class
- * is the half that has to exist first, because it is the half that keeps a
- * missing message from being a 500.
+ * <p><strong>The switcher is the {@link LocaleChangeInterceptor} below, and
+ * wiring it exposed a hole in the clamping above.</strong> The interceptor
+ * calls {@code localeResolver.setLocale(...)} with whatever
+ * {@code StringUtils.parseLocale} made of the query parameter -- it never goes
+ * near {@code parseLocaleValue}, which only ever sees the cookie. So
+ * {@code ?lang=de} would have set German directly, written a {@code de} cookie,
+ * and thrown {@code NoSuchMessageException} on the first label of the next
+ * page: a 500 reachable by editing the address bar. {@code setLocale} is
+ * therefore clamped too. The rule is the same one stated above -- anything
+ * unsupported becomes Bulgarian rather than an exception -- it just has two
+ * doors rather than one.
  */
 @Configuration(proxyBeanMethods = false)
 class LocaleConfig {
@@ -57,6 +69,13 @@ class LocaleConfig {
      * the CHECK constraint, in one commit.
      */
     static final List<Locale> SUPPORTED = List.of(DEFAULT, Locale.forLanguageTag("en"));
+
+    /**
+     * The query parameter the switcher uses. Shared with {@link LocaleSwitch},
+     * which builds the links, so that renaming it is one edit rather than two
+     * that have to agree.
+     */
+    static final String LANGUAGE_PARAMETER = "lang";
 
     /** A year: long enough that a reader sets it once. */
     private static final Duration COOKIE_MAX_AGE = Duration.ofDays(365);
@@ -83,6 +102,50 @@ class LocaleConfig {
     }
 
     /**
+     * The switcher's write half: {@code ?lang=en} on any GET, which the
+     * interceptor turns into a call to the resolver above and therefore into a
+     * cookie. A link rather than a form, because changing the reading language
+     * of a page is not a state change worth a POST and a CSRF token.
+     *
+     * <p>{@code ignoreInvalidLocale} covers the shapes that are not a locale at
+     * all -- {@code ?lang=}, {@code ?lang=../..}, {@code ?lang=%00}. Without
+     * it {@code StringUtils.parseLocale} throws
+     * {@code IllegalArgumentException} out of {@code preHandle}, which is a
+     * 500 rather than a page in the wrong language. The clamp on
+     * {@code setLocale} covers the other shape: a well-formed language tag for
+     * a language this application does not have.
+     *
+     * <p>Only GET, which is the default. A {@code lang} parameter is not
+     * something a POST should carry, and honouring one on a form submission
+     * would mean a redisplayed form with validation errors could come back in
+     * a different language than it went out in.
+     */
+    @Bean
+    LocaleChangeInterceptor localeChangeInterceptor() {
+        LocaleChangeInterceptor interceptor = new LocaleChangeInterceptor();
+        interceptor.setParamName(LANGUAGE_PARAMETER);
+        interceptor.setIgnoreInvalidLocale(true);
+        return interceptor;
+    }
+
+    /**
+     * Registers the interceptor. A {@code WebMvcConfigurer} rather than
+     * {@code @EnableWebMvc} plus a full configuration: the latter switches off
+     * Boot's MVC auto-configuration entirely, which would take the Thymeleaf
+     * view resolver, the static-resource handlers and the message converters
+     * with it.
+     */
+    @Bean
+    WebMvcConfigurer localeChangeRegistration(LocaleChangeInterceptor interceptor) {
+        return new WebMvcConfigurer() {
+            @Override
+            public void addInterceptors(InterceptorRegistry registry) {
+                registry.addInterceptor(interceptor);
+            }
+        };
+    }
+
+    /**
      * A {@link CookieLocaleResolver} that can only ever return a language this
      * application has a bundle for.
      *
@@ -102,6 +165,28 @@ class LocaleConfig {
         @Override
         protected Locale parseLocaleValue(String localeValue) {
             return supported(Locale.forLanguageTag(localeValue));
+        }
+
+        /**
+         * The other door: {@link LocaleChangeInterceptor} reaches the resolver
+         * here, with a locale parsed from the query string rather than from
+         * the cookie, so {@code parseLocaleValue} never sees it.
+         *
+         * <p>Unsupported becomes the default rather than null, because null
+         * here means "forget the preference" -- it clears the cookie -- and
+         * {@code ?lang=de} should leave a reader on Bulgarian, not on whatever
+         * their browser asks for next.
+         */
+        @Override
+        public void setLocale(HttpServletRequest request,
+                              @Nullable HttpServletResponse response,
+                              @Nullable Locale locale) {
+            super.setLocale(request, response, locale == null ? null : clamp(locale));
+        }
+
+        private static Locale clamp(Locale candidate) {
+            Locale match = supported(candidate);
+            return match == null ? DEFAULT : match;
         }
 
         /**

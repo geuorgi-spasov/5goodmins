@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<!--/*
+  Page 7 of the frontend brief: the login form. STRUCTURAL PLACEHOLDER --
+  unstyled on purpose, the design is the frontend contributor's.
+
+  WHAT MUST SURVIVE A REDESIGN:
+
+   * The field names are username and password, because that is what
+     UsernamePasswordAuthenticationFilter reads. Only the label says "email
+     address". Renaming the inputs means naming them again in the filter
+     chain.
+   * th:action, for the CSRF input -- see register.html.
+   * One failure message for every cause. Wrong password, unknown address,
+     unconfirmed account and disabled account all render login.failed, and
+     that vagueness is what keeps this form from becoming the account
+     enumeration oracle AppUserDetailsService exists to close.
+   * role="alert" on the failure and not on the sign-out notice: one is
+     something that went wrong, the other is the outcome the reader asked for.
+*/-->
+<html th:replace="~{layout :: page(#{login.title}, ~{::main})}"
+      xmlns:th="http://www.thymeleaf.org">
+<body>
+<main>
+
+    <h1 th:text="#{login.heading}">Log in</h1>
+
+    <p role="alert" th:if="${failed}" th:text="#{login.failed}">
+        Wrong email address or password.
+    </p>
+    <p th:if="${loggedOut}" th:text="#{login.loggedOut}">
+        You have been logged out.
+    </p>
+
+    <form th:action="@{/login}" method="post" novalidate>
+
+        <div>
+            <label for="username" th:text="#{login.email.label}">Email address</label>
+            <input type="email" id="username" name="username"
+                   autocomplete="username" inputmode="email" required>
+        </div>
+
+        <div>
+            <label for="password" th:text="#{login.password.label}">Password</label>
+            <input type="password" id="password" name="password"
+                   autocomplete="current-password" required>
+        </div>
+
+        <button type="submit" th:text="#{login.submit}">Log in</button>
+    </form>
+
+    <p>
+        <span th:text="#{login.noAccount}">No account yet?</span>
+        <a th:href="@{/register}" th:text="#{login.noAccountLink}">Register</a>
+    </p>
+
+</main>
+</body>
+</html>
