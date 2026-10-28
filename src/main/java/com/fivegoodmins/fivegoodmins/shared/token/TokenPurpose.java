@@ -31,9 +31,10 @@ public enum TokenPurpose {
      * <p>Seven days, to match the purge of unverified rows in ADR-002: a token
      * that outlived its row would resolve to an account that no longer exists,
      * and a token that died well before the purge would leave a user holding a
-     * dead link while the row it names is still there waiting. The resend form
-     * issues a fresh token, so this bounds a single email, not the user's
-     * window to register.
+     * dead link while the row it names is still there waiting. There is no
+     * resend form (ADR-002, Rev 14), so what bounds a user's window to
+     * register is this same seven days: registering again replaces the row and
+     * issues a fresh token.
      */
     EMAIL_VERIFICATION(Duration.ofDays(7)),
 

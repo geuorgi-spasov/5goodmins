@@ -647,6 +647,64 @@ piece of infrastructure used twice. Unverified accounts are purged after seven
 days, and re-registration over an unverified row is allowed so nobody can
 squat someone else's address.
 
+### Q: What happens if the verification email fails to send? **[DEEP]**
+
+Four things, in this order.
+
+The account stays. It was committed before the send was attempted — that is
+what `@TransactionalEventListener(AFTER_COMMIT)` is for — and undoing a correct
+registration because a mail provider had a bad minute would be the wrong
+trade. The send is also off the request thread, so the user is not waiting on
+it either way.
+
+The failure is logged with the account id. Two different failures, both named:
+the send that threw, and the send that was never attempted because the mail
+queue was full. The second one is the interesting half — I had it with
+`@Async` first, and when I filled the queue the rejection turned out to be
+thrown at *submit* time, inside Spring's transaction synchronization, where it
+is logged as an anonymous "afterCompletion threw exception" with no account id,
+because the event is out of scope by then. Neither the listener's catch nor an
+`AsyncUncaughtExceptionHandler` sees it. So I submit to the executor by hand
+and catch `TaskRejectedException` where the event still exists.
+
+The user recovers by registering again, and **the page tells them to.** There
+is no resend form, deliberately: registering again over an unconfirmed address
+replaces the row and issues a fresh link, so it already is a resend, and a
+separate form would be a second entry point to one operation needing its own
+per-address limit, cooldown and daily cap. The honest part of that answer is
+that the decision was only sound because of copy on a page — "check spam, or
+register again with the same address" — and when I made it, that page did not
+exist and nothing was tracking it. A recovery the user cannot discover is not a
+recovery.
+
+And at scale I would move to a transactional outbox: write the pending email to
+a table in the same transaction as the user, let a job send it with backoff and
+mark it done. The outage becomes invisible and survives a restart. It costs a
+table, a job, a retry policy and cleanup, which is not worth it at this volume
+— but naming it is the difference between "I did not build retries" being a
+decision and being an omission.
+
+### Q: Could you resend the link when an unverified user tries to log in? **[DEEP]**
+
+Yes, and it is the best version of this — no new form, and it costs a correct
+password to trigger, so it cannot be used to flood someone else's mailbox. It
+is not free, though, and the reason is interesting.
+
+The unverified check currently lives in `loadUserByUsername`, above Spring
+Security's own status checks, so that every reason not to log in leaves through
+one `UsernameNotFoundException` and an unverified account is indistinguishable
+from an unknown one. Resending requires knowing the password was right, so the
+gate has to move to where that is known: `setPostAuthenticationChecks` on the
+provider, which runs after `additionalAuthenticationChecks` — the password
+comparison.
+
+The naive version is the one to be able to reject out loud: map
+`email_verified_at IS NULL` onto `isEnabled() == false` and let Spring Security
+block it. The pre-authentication checks run before the password is compared, so
+an unverified address answers `DisabledException` for *any* password, and the
+login form becomes an account enumeration oracle. On a site whose users are
+activists, "does this person have an account here" is not a harmless fact.
+
 ### Q: Why no `Organization` entity? **[WARM]**
 
 `User` plus a `POSTER` role plus profile fields expresses everything the MVP
@@ -1002,3 +1060,98 @@ test suite that cannot distinguish "this works" from "this was never executed"
 is not a test suite. The repository now has a `@DataJpaTest` that exercises both
 of its query methods against a real PostgreSQL, so the bean's absence would fail
 the build.
+
+---
+
+## 17. Email delivery and the mail pool
+
+Everything here was learned by running it, which is the only reason it is worth
+saying out loud.
+
+### Q: `corePoolSize=1, maxPoolSize=2, queueCapacity=50` — how many threads does that pool use? **[COLD]**
+
+One. `ThreadPoolExecutor` only creates a thread beyond the core size when the
+queue is **full**, so with fifty slots in front of it the second thread appears
+on the fifty-first simultaneous task and never otherwise. A maximum above the
+core size with a non-trivial queue describes a pool that does not exist.
+
+I wrote exactly that configuration and described it in a comment as two
+threads. The fix was to make it honest rather than to make it two: one thread
+is right for one SMTP round trip at a time, so it is now core 1, max 1. If the
+digest ever needs concurrency, both numbers move together.
+
+The order the executor applies is worth having ready: use a core thread if one
+is free, else **queue**, else grow to max, else reject. People expect "grow,
+then queue".
+
+### Q: What is wrong with Spring Boot's default `@Async` executor? **[WARM]**
+
+Not what the usual answer says. The common claim is that `@Async` falls back to
+`SimpleAsyncTaskExecutor` and starts a thread per call — that is Spring's
+behaviour without Boot. Boot's `TaskExecutionAutoConfiguration` provides
+`applicationTaskExecutor`, a `ThreadPoolTaskExecutor`, and `@Async` uses it.
+
+The real hazard is that pool's **unbounded queue** (`queue-capacity` defaults to
+`Integer.MAX_VALUE`). A mail provider that stops responding accumulates tasks
+until the heap goes, and the symptom surfaces somewhere unrelated because the
+same pool serves everything. So email gets a small pool with a bounded queue,
+where the failure is a rejected task at a known moment rather than a slow leak.
+
+With `spring.threads.virtual.enabled` the default *is* a
+`SimpleAsyncTaskExecutor` — on virtual threads, still unbounded, in a different
+way.
+
+### Q: You defined your own executor. What did that quietly break? **[DEEP]**
+
+Boot's. `TaskExecutionAutoConfiguration` is conditional on there being no
+`Executor` bean at all, so defining `emailExecutor` removes
+`applicationTaskExecutor` — and then a single-threaded pool with a fifty-deep
+queue, sized for one SMTP call at a time, becomes what Spring MVC uses for
+async request handling and what any unqualified `@Async` picks up.
+
+`spring.task.execution.mode=force` keeps both. It is one line of configuration
+standing in for a bug that would have surfaced much later, in something
+unrelated to email, and a test asserts the bean still exists so deleting that
+line fails the build.
+
+### Q: You dropped `@Async`. Why? **[DEEP]**
+
+Because of where a rejection ends up. With `@Async`, the submit to the executor
+happens inside the proxy, which here is inside Spring's transaction
+synchronization — so when the queue is full, `TaskRejectedException` is thrown
+past the listener and lands in `TransactionSynchronizationUtils`, which logs
+"TransactionSynchronization.afterCompletion threw exception" and a stack trace.
+No account id, no address, nothing saying it was an email, because the event is
+out of scope by then. Neither the listener's `catch` nor an
+`AsyncUncaughtExceptionHandler` covers it; both only see failures *inside* the
+task.
+
+I found that by filling the queue and reading the log, not by reasoning about
+it. The listener now calls `emailExecutor.execute(...)` itself and catches the
+rejection where the event still exists, so the line reads "mail queue full, no
+Verification email sent for account 7". The cost is that the committing thread
+does the submitting — microseconds, and on both registration paths equally, so
+the timing oracle stays closed.
+
+The general lesson is the one I would lead with: an annotation moves work to
+another thread *and* moves the failure to another place, and the second half is
+the one nobody checks.
+
+### Q: Anything else that bit you in that commit? **[WARM]**
+
+Two framework behaviours, both of which fail at startup rather than quietly,
+which is the only reason they were cheap.
+
+A `@Configuration` class with `@Bean` methods cannot implement
+`AsyncConfigurer` under Boot 4: a bean post-processor wraps every
+`AsyncConfigurer` to supply the default executor, and the wrapped object is
+then not an instance of the configuration class, so the context fails with
+"Illegal factory instance for factory method".
+
+And there was no `MessageSource` at all. Boot's auto-configuration is behind a
+condition that resolves `classpath*:messages.properties`, and this project
+deliberately ships only `messages_bg` and `messages_en` — no default-locale
+bundle — so the condition never matched and the context fell back to a
+`DelegatingMessageSource` that resolves nothing. That one did *not* fail at
+startup: it failed when the first email rendered, on a pool thread. It is now
+declared by hand.

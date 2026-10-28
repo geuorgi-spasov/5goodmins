@@ -43,7 +43,21 @@ import org.springframework.stereotype.Service;
  * unverified row replaces it and sends a fresh link, so it is already the
  * resend path; ADR-002 cut the separate resend form for that reason rather
  * than build a second entry point to the same operation with its own abuse
- * controls.
+ * controls, and the "check your inbox" page is where the user is told so
+ * (frontend brief, page 8).
+ *
+ * <p><strong>There is a better answer than "wrong credentials", and it is not
+ * a change to this class's wording.</strong> Telling a user who typed the
+ * <em>correct</em> password that their address is not confirmed, and resending
+ * the link, leaks nothing -- they have proved they own the account. It needs
+ * the gate to move out of here, because this method runs before any password
+ * comparison: {@code AbstractUserDetailsAuthenticationProvider}'s
+ * {@code setPostAuthenticationChecks} runs after
+ * {@code additionalAuthenticationChecks}, which is where the password is
+ * checked. That is the recorded next step (ADR-002), to be built with the
+ * login page rather than ahead of it. Until then, do not "improve" the message
+ * below -- the wording and the ordering are one decision, and changing half of
+ * it reopens the oracle.
  */
 @Service
 class AppUserDetailsService implements UserDetailsService {

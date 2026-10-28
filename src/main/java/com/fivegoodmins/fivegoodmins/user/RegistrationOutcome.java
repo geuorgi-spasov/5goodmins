@@ -23,20 +23,19 @@ public sealed interface RegistrationOutcome {
      * A row now exists for this address and nobody has proved they can read
      * the mailbox yet.
      *
-     * @param userId            app_user.id of the new row. New even when the
-     *                          address was taken by an unverified row, because
-     *                          {@link RegistrationService#register} replaces
-     *                          that row rather than updating it.
-     * @param verificationToken the {@code EMAIL_VERIFICATION} token for the
-     *                          link. Returned to the caller only because the
-     *                          email transport does not exist yet (ADR-005);
-     *                          when {@code EmailSender} lands, the service
-     *                          sends the mail itself and this field goes away.
-     *                          Until then: it belongs in a URL, never in a log
-     *                          line, because anyone holding it can verify this
-     *                          account.
+     * <p>No verification token. It was here while there was no email transport
+     * and the caller had to be handed the link; now the token goes straight
+     * into {@code RegistrationEmailEvent.Verification} and never comes back out
+     * through the return value. That is not tidying: a token on this record is
+     * a token a controller can put in a flash message, a log line or a redirect
+     * -- and anyone holding it can confirm this account.
+     *
+     * @param userId app_user.id of the new row. New even when the address was
+     *               taken by an unverified row, because {@link
+     *               RegistrationService#register} replaces that row rather than
+     *               updating it.
      */
-    record Registered(long userId, String verificationToken) implements RegistrationOutcome { }
+    record Registered(long userId) implements RegistrationOutcome { }
 
     /**
      * The address already belongs to an account whose owner has proved they
@@ -46,19 +45,18 @@ public sealed interface RegistrationOutcome {
      * legitimately do with the id of an account the person at the keyboard has
      * not shown they own.
      *
-     * <p>The person who genuinely forgot they have an account gets silence
-     * from this path. The standard answer is a "you already have an account,
-     * reset your password instead" email to the address -- which tells the
-     * owner of the mailbox what the form will not tell a stranger. It needs
-     * the email transport, so it arrives with it.
+     * <p>The person who genuinely forgot they have an account is answered by
+     * email rather than by the page: {@code
+     * RegistrationEmailEvent.ExistingAccount} tells the owner of the mailbox
+     * what the form will not tell a stranger. It offers the login page, not a
+     * password reset, because there is no reset until v1.1.
      *
-     * <p>When it does, <strong>it goes out through the same after-commit,
-     * asynchronous listener as the verification email</strong> (ADR-005), and
-     * for a reason beyond tidiness: this outcome's whole job is to be
-     * indistinguishable from {@link Registered}, and a sender called on one
-     * path and not the other is the difference measurable with a stopwatch.
-     * Two paths that both publish an event and return are the same shape as
-     * well as the same page.
+     * <p>It goes out through <strong>the same after-commit, asynchronous
+     * listener as the verification email</strong> (ADR-005), and for a reason
+     * beyond tidiness: this outcome's whole job is to be indistinguishable from
+     * {@link Registered}, and a sender called on one path and not the other is
+     * a difference measurable with a stopwatch. Two paths that both publish an
+     * event and return are the same shape as well as the same page.
      */
     record AddressTaken() implements RegistrationOutcome { }
 }

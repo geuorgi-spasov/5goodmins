@@ -2,16 +2,19 @@
 
 For the frontend contributor. Read alongside `ARCHITECTURE.md`; where the two
 disagree, `ARCHITECTURE.md` wins and this file gets corrected. Last reconciled
-against ARCHITECTURE.md Rev 7 (2026-10-11): statuses, the optional outbound
-link, and the reports queue were all stale.
+against ARCHITECTURE.md Rev 16 (2026-10-19): the email count went from three to
+four, two of them are now built, and page 8 gained the recovery copy that the
+absence of a resend form depends on. The previous pass was Rev 7 (2026-10-11),
+which corrected statuses, the optional outbound link and the reports queue.
 
 **In one line:** a Bulgarian-language directory of small activism actions —
 petitions, emails to officials, surveys — that users browse by category and
 region, subscribe to, and receive as a daily email digest. Every action links
 out to an external site. We host no petitions ourselves.
 
-**Size of the job:** ~20 page templates, ~15 reusable fragments, 3 email
-templates for the MVP.
+**Size of the job:** ~20 page templates, ~15 reusable fragments, 4 email
+templates for the MVP — two of which exist already, as working HTML you are
+free to redesign (see section 4).
 
 ---
 
@@ -132,7 +135,7 @@ valid title.
 |---|---|---|
 | 6 | **Register** | Email, password, password confirmation, display name, consent checkbox for the privacy policy. |
 | 7 | **Login** | Email, password. Errors are deliberately vague ("wrong email or password"). |
-| 8 | **Verification notice / result** | "Check your inbox", plus the page the emailed link lands on. Three result states, and **none of them offers to resend** (ADR-002 cut the resend form): **confirmed** — success, link to log in; **already confirmed** — same reassuring tone, not an error, since a second click or a mail client prefetching the link is ordinary; **dead link** — the link expired or the unconfirmed account was purged after seven days, so the only action is a link back to Register, which re-issues a fresh email. The "check your inbox" state must also be what a user sees after registering an address that already has a confirmed account — identical page, identical wording, so the form cannot be used to discover who has an account here. |
+| 8 | **Verification notice / result** | "Check your inbox", plus the page the emailed link lands on. Three result states, and **none of them offers to resend** (ADR-002 cut the resend form): **confirmed** — success, link to log in; **already confirmed** — same reassuring tone, not an error, since a second click or a mail client prefetching the link is ordinary; **dead link** — the link expired or the unconfirmed account was purged after seven days, so the only action is a link back to Register, which re-issues a fresh email. The "check your inbox" state must also be what a user sees after registering an address that already has a confirmed account — identical page, identical wording, so the form cannot be used to discover who has an account here. **This page carries the only recovery there is — see below.** |
 | 9 | **Unsubscribe confirmation** | Reached from a digest email link, **works without login**. One page: confirm, done. |
 
 ### Signed in
@@ -161,17 +164,65 @@ valid title.
 | 19 | **404 / 403 / 500** | Real pages in the site layout, not stack traces. 404 matters: deleted actions land here from old digest links. |
 | 20 | **Report an action** | Small form: reason (select, includes "no longer live") + optional text. Modal or small page, submitted via htmx. |
 
-### Emails (3)
+### Emails (4)
 
 Separate templates, and genuinely different work from web pages: table-based
-layout, inline CSS, ~600px, light/dark-safe colours, a plain-text alternative,
-and an unsubscribe footer.
+layout, inline CSS, ~600px, light/dark-safe colours, and a plain-text
+alternative. The unsubscribe footer belongs to the digest only — the other
+three are transactional, and an unsubscribe link on a verification email is a
+link to opt out of the thing the user is in the middle of doing.
 
-1. **Email verification** — one button, minimal.
+1. **Email verification** — one button, minimal. **Built**, along with 4 and a
+   shared `email/layout.html` carrying the header, footer and dark-scheme
+   overrides. Each email is an HTML template plus a `.txt` twin of the same
+   name; both render from the same model, and both are in the message bundles.
 2. **Welcome** — sent after verification; the five newest active actions.
 3. **Daily digest** — the flagship email: new actions matching the user's
    subscriptions, each as a title, category/region badges, one line, a link.
    Must survive Gmail, Outlook and Apple Mail.
+4. **"You already have an account"** — sent when someone registers an address
+   that already has a confirmed account. **Built.** Not in the original three,
+   and not optional: the registration form must answer identically for every
+   address (page 6), which leaves the mailbox as the only safe place to tell
+   the owner anything. Deliberately reassuring rather than alarming — the
+   likely reader is the owner, who forgot. It offers **login, not a password
+   reset**, because reset is v1.1 (section 10); that is the one place the
+   missing reset is visible to a user, and this email is where it goes when it
+   lands.
+
+#### Page 8 must say what to do when the email does not arrive
+
+**This is the most load-bearing copy in the MVP, and it is the one piece of it
+that cannot be left to the layout.** There is no resend form and there will not
+be one (ADR-002): registering again over an unconfirmed address replaces the
+row and sends a fresh link, so it already *is* a resend. That is only true for
+a user who knows it, and right now the page would say "check your inbox", the
+email would not arrive, and nothing would tell them what to do next. The
+registration also cannot be undone from their side, so the dead end is total.
+
+The strings exist — use them, do not write new ones:
+
+| Key | Where |
+|---|---|
+| `verification.notice.heading` | the page heading |
+| `verification.notice.sent` | one argument: the address **as the user typed it**. Echoing it back is how a typo gets caught, and it leaks nothing — they typed it. |
+| `verification.notice.expiry` | one argument: the number of days, passed in from `TokenPurpose.EMAIL_VERIFICATION`, never typed into the template |
+| `verification.notice.spam` | the first thing to check, because a new sending domain is exactly what lands in spam |
+| `verification.notice.resend` + `verification.notice.resendLink` | the recovery: register again with the same address. The link goes back to page 6. |
+
+Two things not to do with it. Do not present it as an error state — most people
+find the email and never read this. And do not put the recovery behind a
+disclosure widget or a "having trouble?" link: the person who needs it is the
+person for whom the page already appears to have failed, and they will not go
+looking.
+
+The **dead link** state reuses `verification.notice.resend` and
+`verification.notice.resendLink` for the same reason, with its own heading.
+
+The two emails that exist are a starting point, not a design — redesign them freely.
+What must not change: every string stays in `messages_bg` / `messages_en`, the
+`.txt` twin stays in step with its HTML, and nothing user-supplied goes in a
+subject line (a newline in a display name is header injection).
 
 ---
 
@@ -273,7 +324,8 @@ Everything below ships in the first release.
 - Bulgarian / English interface switching
 - Responsive layout + web app manifest (installable)
 - Error pages: 404, 403, 500
-- 3 email templates
+- 4 email templates (verification and "you already have an account" are built;
+  welcome and the daily digest are not)
 - Static pages: About, Privacy
 
 ## 10. v1.1 — before real users

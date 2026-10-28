@@ -5,11 +5,12 @@ package com.fivegoodmins.fivegoodmins.shared.token;
  *
  * <p>Three cases rather than an {@code Optional<Long>}, because two of them
  * want different handling and the distinction is free to make. An expired
- * token is a user who waited too long and wants the resend form; a token that
- * fails its signature is either a mangled copy-paste or someone probing, and
- * is the only one of the three worth a log line. Collapsing them would mean
- * either offering a resend link to a forged token or telling a user whose link
- * simply aged out that something is wrong with it.
+ * token is a user who waited too long, and the id on it is still authentic
+ * enough to answer "your address is already confirmed" rather than "that link
+ * is broken"; a token that fails its signature is either a mangled copy-paste
+ * or someone probing, and is the only one of the three worth a log line.
+ * Collapsing them would mean telling a user whose link simply aged out that
+ * something is wrong with it, and telling a forger that something is not.
  *
  * <p>Sealed, so {@code switch} over it is exhaustive without a default branch
  * and adding a fourth case breaks every call site at compile time rather than
