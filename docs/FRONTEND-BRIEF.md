@@ -145,7 +145,7 @@ valid title.
 | 2 | **Action detail** | Title, category/region/type badges, full description, image, optional embedded video, author link, end date with remaining time, and a prominent outbound call-to-action button ("Sign the petition" etc., label depends on type). **The link is optional — needs a second variant with no CTA button at all.** Secondary: share, report. |
 | 3 | **Poster profile** | Display name, bio, website link, list of that poster's published actions. |
 | 4 | **About** | Static content page. |
-| 5 | **Privacy policy / terms** | Static; legally required (GDPR). Same template as About. |
+| 5 | **Privacy policy / terms** | *Stub built, text and design yours.* Static; legally required (GDPR). Same template as About. `/privacy` now resolves — the registration consent checkbox links to it, and a consent whose policy link lands on a login form is not one you can defend. The copy is a truthful placeholder stating what registration stores; **the legal document is still owed.** |
 
 ### Authentication
 

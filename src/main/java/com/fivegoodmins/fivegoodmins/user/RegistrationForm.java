@@ -35,6 +35,14 @@ import jakarta.validation.constraints.Size;
  * Cyrillic costs two each, and the confirmation matching the password, which
  * is a relationship between two fields rather than a property of either. Both
  * are rejected onto the field a reader would look at.
+ *
+ * <p><strong>{@code @Size} therefore carries no {@code max}, and that is the
+ * point rather than an omission.</strong> With one, a 73-character Latin
+ * password tripped the annotation and the byte check both, and the form
+ * rendered two error messages under one field -- one of which said "between 8
+ * and 72 characters", which is not the real ceiling for the users this site is
+ * for. The byte check owns the ceiling alone: one rule, one message, and the
+ * message is the true one.
  */
 public class RegistrationForm {
 
@@ -50,7 +58,7 @@ public class RegistrationForm {
      * below is the only hard constraint BCrypt actually imposes.
      */
     @NotBlank(message = "{validation.password.required}")
-    @Size(min = 8, max = 72, message = "{validation.password.length}")
+    @Size(min = 8, message = "{validation.password.tooShort}")
     private String password;
 
     @NotBlank(message = "{validation.password.confirmationRequired}")

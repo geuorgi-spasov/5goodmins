@@ -3,6 +3,9 @@ package com.fivegoodmins.fivegoodmins.user;
 import com.fivegoodmins.fivegoodmins.shared.AuthPaths;
 import com.fivegoodmins.fivegoodmins.shared.token.TokenPurpose;
 import jakarta.validation.Valid;
+import org.springframework.security.authentication.AuthenticationTrustResolver;
+import org.springframework.security.authentication.AuthenticationTrustResolverImpl;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.validation.BindingResult;
@@ -53,8 +56,28 @@ class RegistrationController {
         this.registrations = registrations;
     }
 
+    /**
+     * {@code permitAll()} permits everyone, not only the anonymous, so a
+     * logged-in visitor can reach this form -- and registering a second
+     * account while holding a session for the first is a state nothing
+     * downstream handles. Both the GET and the POST turn them away.
+     *
+     * <p>A trust resolver rather than a null check: anonymous access is on, so
+     * there is always an {@code Authentication}, and the one on an anonymous
+     * request is an {@code AnonymousAuthenticationToken}. Comparing against
+     * null would make every visitor "logged in" and nobody able to register.
+     */
+    private static final AuthenticationTrustResolver TRUST = new AuthenticationTrustResolverImpl();
+
+    private static boolean alreadySignedIn(Authentication authentication) {
+        return authentication != null && !TRUST.isAnonymous(authentication);
+    }
+
     @GetMapping(AuthPaths.REGISTER)
-    String showForm(@ModelAttribute("form") RegistrationForm form) {
+    String showForm(@ModelAttribute("form") RegistrationForm form, Authentication authentication) {
+        if (alreadySignedIn(authentication)) {
+            return "redirect:/";
+        }
         return "auth/register";
     }
 
@@ -68,7 +91,13 @@ class RegistrationController {
     @PostMapping(AuthPaths.REGISTER)
     String register(@Valid @ModelAttribute("form") RegistrationForm form,
                     BindingResult errors,
+                    Authentication authentication,
                     RedirectAttributes flash) {
+        if (alreadySignedIn(authentication)) {
+            // Before validation, so that a stray POST from a logged-in session
+            // never reaches the service at all.
+            return "redirect:/";
+        }
         checkPasswordByteLength(form, errors);
         checkConfirmationMatches(form, errors);
 

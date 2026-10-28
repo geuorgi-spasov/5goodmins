@@ -27,6 +27,41 @@ import java.util.Locale;
  * view of what it is answering, so the worst a visitor can do is choose which
  * of their own pages to reload in the other language.
  *
+ * <p><strong>Unscoped, after three candidate scopes turned out not to work.</strong>
+ * The concern is fair -- this runs on every controller, which one day includes
+ * ADR-001's {@code /api/v1/actions}, where two language links are built and
+ * nobody reads them. The three ways to narrow it:
+ *
+ * <ul>
+ *   <li>{@code @ControllerAdvice(annotations = Controller.class)} is the
+ *       obvious one and it excludes nothing. {@code @RestController} is itself
+ *       meta-annotated {@code @Controller}, and {@code HandlerTypePredicate}
+ *       matches through {@code AnnotatedElementUtils.hasAnnotation}, which
+ *       searches meta-annotations. Measured, not assumed.</li>
+ *   <li>{@code basePackages} cannot express the distinction in a
+ *       package-by-feature layout (ADR-003). {@code action/} will hold the
+ *       HTML list controller for page 1 <em>and</em> the JSON controller for
+ *       {@code /api/v1/actions}. They are the same package by design.</li>
+ *   <li>A {@code HandlerInterceptor} adding to a non-null {@code ModelAndView}
+ *       in {@code postHandle} would exclude JSON handlers correctly, and
+ *       trades the problem for a worse one: at {@code postHandle} the
+ *       {@code ModelAndView} for a {@code redirect:} view is already built,
+ *       and objects added to it can be appended to the redirect URL as query
+ *       parameters.</li>
+ * </ul>
+ *
+ * <p>So the cost stays, and it is two string builds on a request that ignores
+ * them. What would have been expensive was the exception in
+ * {@link #samePageIn}, which this advice would have carried onto every JSON
+ * endpoint as well; that is fixed there rather than by hiding from it.
+ *
+ * <p>The related hazard worth pinning is that a model attribute added to every
+ * controller must not end up in a redirect's query string. It does not:
+ * {@code RequestMappingHandlerAdapter.ignoreDefaultModelOnRedirect} is true by
+ * default from Spring 6, so the default model is dropped on a redirect. That is
+ * a default this class depends on rather than sets, which is exactly the kind
+ * worth a test -- see {@code LocaleSwitchWebTest}.
+ *
  * @see LocaleConfig
  */
 @ControllerAdvice
@@ -58,21 +93,78 @@ class LocaleSwitch {
                 .toList();
     }
 
+    /**
+     * This page in the given language, or -- if the current query string
+     * cannot be rebuilt safely -- this path in the given language.
+     *
+     * <p><strong>The catch is the whole method, and leaving it out was a 500 on
+     * any page, from the address bar.</strong> {@code build(true)} tells Spring
+     * the path and query are already encoded, and Spring does not take that on
+     * trust: {@code HierarchicalUriComponents} verifies every component and
+     * throws {@code IllegalArgumentException} on anything it considers
+     * invalid. {@code getQueryString()} is raw, straight off the wire. So the
+     * exception comes out of a {@code @ModelAttribute} method on a page with
+     * nothing to do with the language switcher -- and the error dispatch to
+     * {@code /error} reaches {@code BasicErrorController}, also a controller,
+     * also covered by this advice, where building the error page throws again.
+     *
+     * <p><strong>What actually triggers it is an ordinary {@code =} inside a
+     * parameter value</strong>, and finding that took measuring rather than
+     * reasoning. The obvious guess -- a malformed percent sequence like
+     * {@code ?x=100%} -- never arrives: Tomcat 11 answers 400 itself, and so
+     * it does for a raw space, {@code |}, <code>{</code>, {@code ^},
+     * {@code \}, {@code "} and {@code <}. What Tomcat passes through happily,
+     * because RFC 3986 allows it in a query, is {@code ?t=abc==} or
+     * {@code ?next=http://x/?a=b}. Spring is stricter one level down:
+     * {@code query(String)} splits on {@code [^&=]+} and then verifies each
+     * value as {@code Type.QUERY_PARAM}, which forbids {@code =} and {@code &}
+     * because they are its own delimiters. Base64 padding, a nested URL, a
+     * JWT -- all of them are a 500.
+     *
+     * <p>Nothing in the registration flow reaches it today, and that is luck
+     * worth naming rather than a reason to leave it: {@code SignedTokenService}
+     * encodes its MAC {@code withoutPadding()}, so a verification link carries
+     * no {@code =}. ADR-001's {@code /api/v1/actions?q=...} is one query
+     * parameter away from it.
+     *
+     * <p><strong>Why not drop {@code build(true)} and let the builder encode?</strong>
+     * Because the input really is encoded, and encoding it twice turns a
+     * {@code %20} in the path into {@code %2520} -- the switcher would point at
+     * a different URL than the one being read.
+     *
+     * <p><strong>Why not rebuild the query from {@code getParameterMap()},</strong>
+     * which is already decoded and could never throw? Because that map merges
+     * the query string with the <em>form body</em> on a POST, and the POST this
+     * advice runs on most often is the registration form. The language links on
+     * a redisplayed form would carry the submitted password in their href. That
+     * is not a tidier version of this method; it is a credential leak.
+     *
+     * <p>So the query is passed through as it arrived, and the one case that
+     * cannot be passed through is degraded rather than thrown: the reader keeps
+     * a working language switcher and loses a query string that was already
+     * malformed for the page they are on.
+     */
     private static String samePageIn(HttpServletRequest request, String tag) {
-        UriComponentsBuilder here = UriComponentsBuilder.fromPath(request.getRequestURI());
         String query = request.getQueryString();
         if (query != null) {
-            here.query(query);
+            try {
+                return withLanguage(UriComponentsBuilder.fromPath(request.getRequestURI()).query(query), tag);
+            } catch (IllegalArgumentException unrebuildable) {
+                // Deliberately not logged. It is reachable by anyone editing a
+                // URL, so logging it is a log line anybody can write at will.
+            }
         }
-        // replaceQueryParam rather than queryParam: a reader who has already
-        // switched once is on a URL that carries ?lang=, and appending a second
-        // value would make the parameter a list whose first entry the
-        // interceptor reads -- clicking "English" on an ?lang=bg page would
-        // stay Bulgarian.
-        //
-        // build(true) says the path and query came in already encoded, which
-        // they did: both are read straight off the request. Letting the builder
-        // encode them a second time would turn a %20 in the path into %2520.
+        return withLanguage(UriComponentsBuilder.fromPath(request.getRequestURI()), tag);
+    }
+
+    /**
+     * {@code replaceQueryParam} rather than {@code queryParam}: a reader who has
+     * already switched once is on a URL that carries {@code ?lang=}, and
+     * appending a second value would make the parameter a list whose first
+     * entry the interceptor reads -- clicking "English" on a {@code ?lang=bg}
+     * page would stay Bulgarian.
+     */
+    private static String withLanguage(UriComponentsBuilder here, String tag) {
         return here.replaceQueryParam(LocaleConfig.LANGUAGE_PARAMETER, tag).build(true).toUriString();
     }
 }

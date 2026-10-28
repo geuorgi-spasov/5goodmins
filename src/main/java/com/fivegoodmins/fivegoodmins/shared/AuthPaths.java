@@ -37,6 +37,14 @@ public final class AuthPaths {
     /** Page 7, and the path {@code formLogin().loginPage(...)} names. */
     public static final String LOGIN = "/login";
 
+    /**
+     * Page 5 of the frontend brief, and here rather than in a holder of its
+     * own because the registration form's consent checkbox is what links to
+     * it: a GDPR consent whose policy link does not resolve is not a consent
+     * worth collecting, so the two belong in one place.
+     */
+    public static final String PRIVACY = "/privacy";
+
     /** The query parameter on {@link #VERIFY_EMAIL}. */
     public static final String TOKEN_PARAMETER = "token";
 

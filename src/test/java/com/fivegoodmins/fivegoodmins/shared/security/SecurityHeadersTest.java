@@ -7,12 +7,16 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Optional;
 
+import static java.util.stream.Collectors.toSet;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -114,11 +118,21 @@ class SecurityHeadersTest {
         //     the protection actually holds, and the only cost is the cost of
         //     the commitment above.
         //
-        // If this assertion ever fails on a Spring Security upgrade, that is
-        // the decision changing underneath us, which is exactly the thing
-        // worth being told about.
-        assertThat(header(response, "Strict-Transport-Security"))
-                .hasValue("max-age=31536000 ; includeSubDomains");
+        // The DIRECTIVE SET, not the header string. Spring Security writes
+        // "max-age=31536000 ; includeSubDomains" with a space before the
+        // semicolon, and that space is a quirk of how HstsHeaderWriter
+        // concatenates rather than part of the policy. Asserting the raw string
+        // means a red build the day somebody tidies the formatting -- and a red
+        // build for a non-change is exactly what teaches people to loosen an
+        // assertion back to contains("max-age").
+        //
+        // Split and compared as a set, this still fails for every change that
+        // IS the decision: max-age moving off a year, includeSubDomains
+        // disappearing, preload appearing, or a directive nobody chose showing
+        // up.
+        assertThat(header(response, "Strict-Transport-Security")).hasValueSatisfying(hsts ->
+                assertThat(Arrays.stream(hsts.split(";")).map(String::trim).collect(toSet()))
+                        .containsExactlyInAnyOrder("max-age=31536000", "includeSubDomains"));
     }
 
     @Test
@@ -140,6 +154,47 @@ class SecurityHeadersTest {
                 .contains("Secure")
                 .contains("SameSite=Lax")
                 .contains("HttpOnly"));
+    }
+
+    /** A request line written by hand, because every HTTP client sanitises what is under test. */
+    private String statusLineFor(String query) throws IOException {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.getOutputStream().write(("GET /register?" + query + " HTTP/1.1\r\n"
+                    + "Host: localhost\r\n"
+                    + "Connection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+            socket.getOutputStream().flush();
+            return new String(socket.getInputStream().readAllBytes(), StandardCharsets.ISO_8859_1)
+                    .lines().findFirst().orElse("");
+        }
+    }
+
+    /**
+     * Which malformed query strings reach the application at all -- the
+     * question behind the guard in {@code LocaleSwitch}, answered rather than
+     * assumed.
+     *
+     * <p>A raw socket, because everything in the way cleans this up:
+     * {@code URI.create} throws on a stray {@code %}, {@code HttpClient} will
+     * not take a URI it cannot parse, and MockMvc's request builder normalises
+     * the query before the request exists. Writing the request line by hand is
+     * the only way to ask Tomcat what it does.
+     *
+     * <p>The answer corrected an assumption rather than confirming one. The
+     * obvious trigger -- a bad percent sequence -- never arrives, because
+     * Tomcat 11 rejects it itself. What sails through is an ordinary
+     * {@code =} inside a value, which RFC 3986 allows in a query and which
+     * {@code UriComponentsBuilder} then refuses as {@code QUERY_PARAM}. That
+     * is base64 padding, a nested URL, a JWT.
+     */
+    @Test
+    void rejectsAMalformedPercentSequenceItselfButPassesAnEqualsSignThrough() throws Exception {
+        // Tomcat's own 400. Also its answer to a raw space, |, {, ^, \, " and <.
+        assertThat(statusLineFor("x=100%")).startsWith("HTTP/1.1 400");
+
+        // And the one that does reach a controller. 500 here is the regression
+        // the LocaleSwitch guard exists to prevent.
+        assertThat(statusLineFor("t=abc==")).startsWith("HTTP/1.1 200");
+        assertThat(statusLineFor("next=http://x/?a=b")).startsWith("HTTP/1.1 200");
     }
 
     @Test

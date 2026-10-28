@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.validation.BindingResult;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -26,6 +27,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -129,12 +131,18 @@ class RegistrationWebTest {
     }
 
     @Test
-    void bothRegistrationOutcomesProduceTheIdenticalResponse() throws Exception {
+    void bothRegistrationOutcomesProduceTheSameStatusRedirectAndFlash() throws Exception {
         // The point of the whole flow. RegistrationService already equalises
         // the time the two paths take; this is the other half -- if the
         // controller ever redirects one and re-renders the other, or varies a
         // flash message, the registration form answers "does this address have
         // an account here?" for anybody who looks at the response.
+        //
+        // Named for exactly what it compares. Status, Location and the flash
+        // map is the whole of a redirect's observable content -- there is no
+        // body -- but it is NOT every response header, and claiming "identical
+        // responses" invites the follow-up question this test cannot answer.
+        // Set-Cookie in particular differs by session id between the two runs.
         when(registrations.register(any(), any(), any()))
                 .thenReturn(new RegistrationOutcome.Registered(1L));
         MvcResult registered = mockMvc.perform(validSubmission()).andReturn();
@@ -207,6 +215,62 @@ class RegistrationWebTest {
         assertThat(CYRILLIC_PASSPHRASE.length()).isLessThanOrEqualTo(72);
         assertThat(CYRILLIC_PASSPHRASE.getBytes(StandardCharsets.UTF_8).length).isGreaterThan(72);
         verify(registrations, never()).register(any(), any(), any());
+    }
+
+    @Test
+    void saysOneThingAboutAnOverLongPasswordRatherThanTwo() throws Exception {
+        // 73 Latin characters is 73 bytes: over the byte ceiling and, when
+        // @Size still carried max = 72, over that too. The form rendered two
+        // messages under one field, one of which said "between 8 and 72
+        // characters" -- which is not the real ceiling for the users this site
+        // is for. @Size now carries only min, and the byte check owns the
+        // ceiling alone.
+        String tooLong = "a".repeat(73);
+
+        MvcResult result = mockMvc.perform(post(AuthPaths.REGISTER).with(csrf())
+                        .param("email", "ivan@example.com")
+                        .param("displayName", "Иван")
+                        .param("password", tooLong)
+                        .param("passwordConfirmation", tooLong)
+                        .param("privacyAccepted", "true"))
+                .andExpect(status().isOk())
+                .andExpect(model().attributeHasFieldErrorCode(
+                        "form", "password", "validation.password.tooManyBytes"))
+                .andReturn();
+
+        BindingResult binding = (BindingResult) result.getModelAndView()
+                .getModel()
+                .get(BindingResult.MODEL_KEY_PREFIX + "form");
+        assertThat(binding.getFieldErrors("password")).hasSize(1);
+
+        verify(registrations, never()).register(any(), any(), any());
+    }
+
+    @Test
+    void turnsASignedInVisitorAwayFromTheRegistrationForm() throws Exception {
+        // permitAll() permits everyone, not only the anonymous. Registering a
+        // second account while holding a session for the first is a state
+        // nothing downstream handles.
+        mockMvc.perform(get(AuthPaths.REGISTER).with(user("ivan@example.com")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/"));
+
+        mockMvc.perform(validSubmission().with(user("ivan@example.com")))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/"));
+
+        verify(registrations, never()).register(any(), any(), any());
+    }
+
+    @Test
+    void servesThePrivacyPolicyTheConsentCheckboxLinksTo() throws Exception {
+        // The consent link resolved to the login redirect before page 5
+        // existed, which makes the checkbox above it undefendable: the only
+        // visitor who sees it is the one who cannot read what they are
+        // agreeing to.
+        mockMvc.perform(get(AuthPaths.PRIVACY))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("Политика за поверителност")));
     }
 
     @Test

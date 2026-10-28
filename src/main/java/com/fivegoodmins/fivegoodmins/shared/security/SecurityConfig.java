@@ -60,7 +60,12 @@ class SecurityConfig {
                         .requestMatchers(
                                 AuthPaths.REGISTER,
                                 AuthPaths.CHECK_EMAIL,
-                                AuthPaths.VERIFY_EMAIL)
+                                AuthPaths.VERIFY_EMAIL,
+                                // The consent checkbox on /register links here,
+                                // so it has to be readable before anybody has
+                                // an account -- a privacy policy behind a login
+                                // is not one you can consent to.
+                                AuthPaths.PRIVACY)
                         .permitAll()
 
                         // Default deny. Most of this site will end up public --
