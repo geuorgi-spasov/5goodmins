@@ -93,8 +93,30 @@ class SecurityHeadersTest {
         // tests before writing the header.
         HttpResponse<String> response = get("/", "X-Forwarded-Proto", "https");
 
+        // Asserted whole rather than by substring, because the policy is the
+        // value and not just its presence. Spring Security's default is a year
+        // with includeSubDomains and without preload, and all three are
+        // deliberate (ADR-002):
+        //
+        //   * includeSubDomains stays. Without it, an active attacker can
+        //     serve http://anything.5goodmins.com and set a cookie scoped to
+        //     .5goodmins.com, which the apex then receives -- the session
+        //     cookie being Secure stops it leaking, not an attacker planting
+        //     one. HSTS on the apex alone does not close that; this does.
+        //   * preload is not added. It is the one-way door: submission bakes
+        //     the domain into browser binaries, removal takes months of
+        //     release trains, and from then on every subdomain of
+        //     5goodmins.com must be HTTPS or be unreachable. A year of
+        //     max-age already buys the protection that matters.
+        //   * A year, because a shorter max-age is a shorter window in which
+        //     the protection actually holds, and the only cost is the cost of
+        //     the commitment above.
+        //
+        // If this assertion ever fails on a Spring Security upgrade, that is
+        // the decision changing underneath us, which is exactly the thing
+        // worth being told about.
         assertThat(header(response, "Strict-Transport-Security"))
-                .hasValueSatisfying(hsts -> assertThat(hsts).contains("max-age=31536000"));
+                .hasValue("max-age=31536000 ; includeSubDomains");
     }
 
     @Test
