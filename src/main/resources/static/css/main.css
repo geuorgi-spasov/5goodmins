@@ -1,0 +1,31 @@
+/*
+ * The stylesheet. Empty on purpose.
+ *
+ * The design is the frontend contributor's (frontend brief, section 7): a
+ * turquoise brand colour and an accessible, text-heavy, mobile-first layout,
+ * with everything else open. What is here is the one decision already made
+ * and the two constraints that are not style preferences.
+ *
+ * CONSTRAINTS, not taste:
+ *
+ *   1. The Content-Security-Policy (ADR-020) is default-src 'self' with no
+ *      'unsafe-inline'. Every rule has to be in a file like this one -- an
+ *      inline style="..." attribute and an inline <style> block are both
+ *      blocked by the browser, silently, with only a console message. The
+ *      same applies to JavaScript: files under /js, no onclick handlers.
+ *   2. Fonts are self-hosted from /fonts and must cover Cyrillic. See the
+ *      README there.
+ *
+ * Add more stylesheets by linking them in templates/layout.html, or add a
+ * third parameter to that fragment for per-page assets.
+ */
+
+:root {
+    /*
+     * The one fixed decision in section 7. The exact value is yours -- this
+     * is a starting point, not a brand guideline, and it is here so that
+     * "turquoise" is a token from the first commit rather than a hex code
+     * copied into fifteen rules.
+     */
+    --colour-brand: #14b8a6;
+}

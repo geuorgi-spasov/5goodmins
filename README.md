@@ -29,36 +29,72 @@ Work in progress.
 Done:
 
 - Spring Boot skeleton, package-by-feature layout
-- Docker Compose for the backing services: PostgreSQL and Mailpit
+- Docker Compose for everything: PostgreSQL, Mailpit and the application
+- GitHub Actions pipeline; deployed to Railway behind the real domain
 - Flyway `V1__` migration — the user and action schema
 - `AppUser` and `Action` entities with repository tests on a real PostgreSQL
+- Registration, login, email verification, and the two transactional emails
+- The frontend groundwork: base layout, static assets with a pinned htmx,
+  Content-Security-Policy, error pages, the Bulgarian and English labels for
+  every enum, and a dev-only style guide at `/dev/styleguide`
 
 Next, in order:
 
-- Dockerfile and an `app` service in Compose, so one command runs everything
-- GitHub Actions pipeline
-- Deploy to Railway behind the real domain
-- Registration, login, email verification
-- Submitting and listing actions
+- Templates and the design system (a frontend contributor — see
+  `docs/FRONTEND-BRIEF.md`)
+- Submitting and listing actions, with filters and search
 - Subscriptions and the daily digest email
+- Moderation and the admin pages
 
 ---
 
 ## Running it locally
 
-Needs Docker and Java 21. The application is not containerised yet — Compose
-runs the backing services only, which is the next thing on the list above.
+**Everything in one command — needs Docker, and nothing else:**
 
 ```bash
-docker compose up -d          # PostgreSQL + Mailpit
-./mvnw spring-boot:run        # the application
+docker compose --profile app up --build
 ```
 
+That starts PostgreSQL, Mailpit and the application. The first build fetches
+the dependency tree and takes a few minutes; later starts reuse it.
+
+**With a local Java toolchain**, which is faster to restart and what you want
+if you are changing Java rather than templates:
+
+```bash
+./mvnw spring-boot:run
+```
+
+Compose is started for you — `spring-boot-docker-compose` reads `compose.yaml`
+and brings up PostgreSQL and Mailpit, and stops them again when the
+application exits. It leaves the `app` service alone, because that service
+sits behind a Compose profile; without that, a local run would start a second
+copy of the application in a container and fight it for port 8080.
+
 - Application — http://localhost:8080
+- Style guide (dev profile only) — http://localhost:8080/dev/styleguide
 - Mailpit (catches outgoing mail) — http://localhost:8025
 - PostgreSQL — localhost:5432, database `fivegoodmins`, user/password `app`
 
-Flyway applies the migrations on startup.
+Flyway applies the migrations on startup, and in development it also applies
+`db/dev-seed/R__dev_seed.sql`: 31 actions in realistic Bulgarian and three
+accounts, one per role (ADR-021).
+
+| Account | Role |
+|---|---|
+| `admin@seed.5goodmins.local` | `ADMIN` |
+| `poster@seed.5goodmins.local` | `POSTER` |
+| `user@seed.5goodmins.local` | `USER` |
+
+All three have the password `parola123`. They exist only in development: the
+seed is in a Flyway location the `dev` profile adds and nothing else reads.
+
+**Templates, CSS and JavaScript reload on save** — no restart, no rebuild. The
+`dev` profile points Thymeleaf and the static resource handler at
+`src/main/resources` instead of the compiled copy under `target/`, and the
+Compose `app` service bind-mounts the same directory. Changing Java code still
+needs a restart.
 
 Tests:
 
