@@ -1,5 +1,8 @@
 package com.fivegoodmins.fivegoodmins.user;
 
+import com.fivegoodmins.fivegoodmins.action.ActionPaths;
+import com.fivegoodmins.fivegoodmins.action.ActionSummary;
+import com.fivegoodmins.fivegoodmins.action.ActionType;
 import com.fivegoodmins.fivegoodmins.shared.AuthPaths;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailComposer;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailConfig;
@@ -18,6 +21,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -88,6 +92,9 @@ class RegistrationEmailListener {
 
     private static final EmailTemplate EXISTING_ACCOUNT =
             new EmailTemplate("email/existing-account", "email.existingAccount.subject");
+
+    private static final EmailTemplate WELCOME =
+            new EmailTemplate("email/welcome", "email.welcome.subject");
 
     private final EmailComposer composer;
     private final EmailSender sender;
@@ -173,7 +180,48 @@ class RegistrationEmailListener {
                     EXISTING_ACCOUNT,
                     Map.of("displayName", existing.displayName(),
                             "loginUrl", url(AuthPaths.LOGIN)));
+            case RegistrationEmailEvent.Welcome welcome -> composer.compose(
+                    welcome.email(),
+                    welcome.locale(),
+                    WELCOME,
+                    Map.of("displayName", welcome.displayName(),
+                            "actions", linked(welcome.actions()),
+                            "actionsUrl", url(ActionPaths.LIST)));
         };
+    }
+
+    /**
+     * Turns the projections the event carried into what the template renders:
+     * the same fields plus an absolute link.
+     *
+     * <p><strong>The URL is built here, not in the template.</strong> Every
+     * other link in every other email is assembled in this class, from
+     * {@link ActionPaths} and the configured base URL, for a reason that is
+     * easy to forget in a template: {@code ${siteUrl + '/actions/' + id}} is a
+     * route spelled out in a file nobody greps when the route changes. Doing it
+     * here means the compiler and {@link ActionPaths} are both involved.
+     *
+     * <p>The type stays an enum rather than becoming a label, because the label
+     * belongs to the message bundle (ADR-008) and the template resolves it as
+     * {@code #{${'actionType.' + action.actionType}}}. Translating it in Java
+     * would put a user-facing string in a {@code switch}.
+     */
+    private List<WelcomeAction> linked(List<ActionSummary> actions) {
+        return actions.stream()
+                .map(action -> new WelcomeAction(
+                        action.title(),
+                        action.actionType(),
+                        action.description(),
+                        url(ActionPaths.detail(action.id()))))
+                .toList();
+    }
+
+    /**
+     * One action as the welcome email shows it. Nested and private: it is this
+     * template's view model and nothing else's, and the day the digest needs a
+     * similar one it will need different fields.
+     */
+    private record WelcomeAction(String title, ActionType actionType, String description, String url) {
     }
 
     /**

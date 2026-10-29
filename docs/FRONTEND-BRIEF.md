@@ -179,7 +179,7 @@ valid title.
 
 | # | Page | Notes |
 |---|---|---|
-| 19 | **404 / 403 / 500** | Real pages in the site layout, not stack traces. 404 matters: deleted actions land here from old digest links. |
+| 19 | **404 / 403 / 500 / 429** | Real pages in the site layout, not stack traces. 404 matters: deleted actions land here from old digest links — and from the welcome email, whose action links point at page 2 before page 2 exists. **429 joins the list:** the rate limiter on `/login` and `/register` (ADR-002) refuses through the error dispatch with a `Retry-After` header, precisely so that it inherits this page instead of carrying a user-facing string in Java. Until then a rate-limited user gets the whitelabel page, which tells them nothing — so this one needs copy as well as a layout: what happened, and that it will work again shortly. |
 | 20 | **Report an action** | Small form: reason (select, includes "no longer live") + optional text. Modal or small page, submitted via htmx. |
 
 ### Emails (4)
@@ -195,6 +195,15 @@ link to opt out of the thing the user is in the middle of doing.
    overrides. Each email is an HTML template plus a `.txt` twin of the same
    name; both render from the same model, and both are in the message bundles.
 2. **Welcome** — sent after verification; the five newest active actions.
+   **Built.** Structural placeholder like the others: a greeting, an intro, one
+   block per action (type label, linked title, one abbreviated line) and a
+   single call to action pointing at the listing. Three things must survive a
+   redesign. The empty state is copy, not a gap — the first confirmed account
+   on a fresh deployment sees no actions at all, and a silent hole where a list
+   should be reads as a broken email. There is **no unsubscribe link**, by
+   decision rather than omission (see the paragraph above this list). And there
+   is no mention of the daily digest, because the job does not exist yet; that
+   line is owed, and it lands with the job rather than with the design.
 3. **Daily digest** — the flagship email: new actions matching the user's
    subscriptions, each as a title, category/region badges, one line, a link.
    Must survive Gmail, Outlook and Apple Mail.

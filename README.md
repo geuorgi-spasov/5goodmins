@@ -32,15 +32,19 @@ Done:
 - Docker Compose for the backing services: PostgreSQL and Mailpit
 - Flyway `V1__` migration — the user and action schema
 - `AppUser` and `Action` entities with repository tests on a real PostgreSQL
+- Dockerfile, GitHub Actions pipeline, deployed on Railway behind Cloudflare
+- Registration, login and email verification, end to end, with their pages
+- Email: one `EmailSender` interface, Mailpit in development and Brevo's HTTP
+  API in production; verification, "you already have an account" and welcome
+  emails, each with a plain-text twin
+- Rate limiting on `/login` and `/register` (see below)
 
 Next, in order:
 
-- Dockerfile and an `app` service in Compose, so one command runs everything
-- GitHub Actions pipeline
-- Deploy to Railway behind the real domain
-- Registration, login, email verification
-- Submitting and listing actions
-- Subscriptions and the daily digest email
+- Page 1: the action list, which several already-built links point at
+- Subscriptions and preferences, then the daily digest email and unsubscribe
+- Submitting actions and the admin approval queue
+- Seed data, so the deployed site is not an empty page
 
 ---
 
@@ -102,14 +106,57 @@ digest ships.
 overridden by an environment variable through Spring's relaxed binding, so the
 application moves hosts without code changes.
 
-| Variable | Purpose |
-|---|---|
-| `SPRING_DATASOURCE_URL` / `_USERNAME` / `_PASSWORD` | Database connection |
-| `APP_BASE_URL` | Base URL used in email links |
-| `SPRING_PROFILES_ACTIVE` | `dev` or `prod` |
+Four values have **no default and no fallback**, and the application refuses to
+start without them. That is deliberate in each case: a committed default would
+either be a published secret or a plausible wrong value that fails days later
+in somebody's inbox rather than at startup.
 
-Mail goes to Mailpit in development and to a transactional provider's HTTP API
-in production, behind one `EmailSender` interface.
+| Variable | Purpose | Required |
+|---|---|---|
+| `SPRING_DATASOURCE_URL` / `_USERNAME` / `_PASSWORD` | Database connection | yes |
+| `APP_TOKEN_SECRET` | HMAC key for email-verification and unsubscribe links, 32+ chars | yes |
+| `APP_MAIL_FROM` | Sender address, on a domain whose SPF and DKIM name the provider | yes |
+| `APP_MAIL_BASE_URL` | Public origin used to build the links emails carry | yes |
+| `APP_MAIL_FROM_NAME` | Display name shown instead of the address | no |
+| `APP_MAIL_BREVO_API_KEY` | Brevo transactional API key; absent means no mail is sent | no |
+| `APP_RATE_LIMIT_ENABLED` | `false` switches the rate limiter off during an incident | no |
+| `SPRING_PROFILES_ACTIVE` | `dev` locally; unset in the container | no |
+
+Rotating `APP_TOKEN_SECRET` invalidates every verification and unsubscribe link
+already sitting in a mailbox.
+
+Mail goes to Mailpit in development and to Brevo's HTTP API in production,
+behind one `EmailSender` interface. With neither configured the application
+starts normally and *refuses loudly* on a send rather than discarding silently,
+which is the state a deploy with no API key is in.
+
+---
+
+## Rate limiting
+
+Bucket4j on `POST /login` and `POST /register` only, keyed on the client address
+that Tomcat's `RemoteIpValve` resolves — never on a forwarded header, which a
+request straight to the origin could forge.
+
+| Endpoint | Limit | Keyed on |
+|---|---|---|
+| `POST /login` | 20 per 15 minutes | client address |
+| `POST /register` | 10 per hour | client address |
+| `POST /register` | 3 per 24 hours | the submitted email address |
+
+The first two are sized for a *shared* address rather than for one person —
+carrier-grade NAT puts a whole mobile network behind a handful of them. The
+third protects somebody else's inbox rather than this server: registering over
+an unconfirmed address emails its owner, so without a per-address cap the form
+is a mail cannon.
+
+IPv6 clients are keyed on the `/64` prefix, because a `/128` would give one
+household 2^64 buckets. Buckets live in memory, so **every deploy resets
+them** — accepted for one instance, and the thing to fix alongside the
+scheduler if a second ever exists.
+
+A refusal is `429` with `Retry-After`, through the error dispatch, so it will
+inherit the real error page when that is built.
 
 ---
 

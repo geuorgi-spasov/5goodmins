@@ -31,6 +31,8 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
+		<!-- Not in Boot's BOM, so the version is ours to own and to bump. -->
+		<bucket4j.version>8.10.1</bucket4j.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -64,6 +66,29 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-mail</artifactId>
+		</dependency>
+		<!-- Rate limiting on /login and /register (ADR-002). bucket4j-core
+		     alone: every other Bucket4j module exists to share buckets across
+		     a cluster through Hazelcast, Redis or a JCache provider, and
+		     ADR-012 already states this application runs as exactly one
+		     instance, which is the same assumption the digest scheduler makes.
+		     A distributed bucket store would be the second place that
+		     assumption is encoded, and Redis is on the rejected list. -->
+		<dependency>
+			<groupId>com.bucket4j</groupId>
+			<artifactId>bucket4j-core</artifactId>
+			<version>${bucket4j.version}</version>
+		</dependency>
+		<!-- Bounded storage for those buckets. A plain ConcurrentHashMap keyed
+		     on a client address is a memory leak with an attacker's name on
+		     it: one entry per address seen, never removed, and an IPv6 /64
+		     hands out 2^64 of them. Caffeine gives a maximum size and a
+		     time-based eviction in one line each, and its W-TinyLFU policy
+		     preferentially keeps the frequently-hit keys, which under an
+		     attack are the attacker's. Version managed by Boot's BOM. -->
+		<dependency>
+			<groupId>com.github.ben-manes.caffeine</groupId>
+			<artifactId>caffeine</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.flywaydb</groupId>
