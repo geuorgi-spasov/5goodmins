@@ -123,6 +123,10 @@ in somebody's inbox rather than at startup.
 | `APP_MAIL_FROM_NAME` | Display name shown instead of the address | no |
 | `APP_MAIL_BREVO_API_KEY` | Brevo transactional API key; absent means no mail is sent | no |
 | `APP_RATE_LIMIT_REFUSE_REQUESTS` | `false` stops the limiter refusing requests, during an incident | no |
+| `SPRING_PROFILES_ACTIVE` | `dev` locally; unset in the container | no |
+
+Rotating `APP_TOKEN_SECRET` invalidates every verification and unsubscribe link
+already sitting in a mailbox.
 
 **`app.rate-limit.*` is bound with `ignoreUnknownFields = false`**, so a stale
 variable under that prefix fails startup naming itself rather than binding to
@@ -131,10 +135,6 @@ flag had before it was narrowed to request refusal — the next deploy will not
 start, and will say `The elements [app.rate-limit.enabled] were left unbound`.
 Delete the variable. Railway only drains the old container once the new one is
 healthy, so a refused startup costs a deploy rather than the site.
-| `SPRING_PROFILES_ACTIVE` | `dev` locally; unset in the container | no |
-
-Rotating `APP_TOKEN_SECRET` invalidates every verification and unsubscribe link
-already sitting in a mailbox.
 
 Mail goes to Mailpit in development and to Brevo's HTTP API in production,
 behind one `EmailSender` interface. With neither configured the application
