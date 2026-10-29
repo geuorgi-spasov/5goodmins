@@ -3,7 +3,10 @@ package com.fivegoodmins.fivegoodmins.shared.ratelimit;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
 import java.util.Map;
@@ -18,8 +21,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * rationale, and a change to any of them should fail a build and be argued
  * for -- not land quietly because somebody was adjusting a default while
  * debugging something else. The suite runs with
- * {@code app.rate-limit.enabled=false}, so this is also the only place the
- * shipped defaults are observed at all.
+ * {@code app.rate-limit.refuse-requests=false} and the mail cap raised, so this
+ * is also the only place the shipped defaults are observed at all.
  */
 class RateLimitPropertiesTest {
 
@@ -79,6 +82,50 @@ class RateLimitPropertiesTest {
                         "registrationsPerAddress", "registrationsPerAddressWindow",
                         "registrationEmailsPerRecipient", "registrationEmailsPerRecipientWindow",
                         "maxTrackedKeys");
+    }
+
+    /**
+     * A stale {@code app.rate-limit.*} variable must fail startup, not bind to
+     * nothing.
+     *
+     * <p>Spring ignores unknown configuration properties, so renaming
+     * {@code enabled} to {@code refuse-requests} left any environment still
+     * setting {@code APP_RATE_LIMIT_ENABLED} silently un-switched -- the
+     * limiter back on at the next deploy with nothing saying so.
+     * {@code ignoreUnknownFields = false} turns that into a refused startup
+     * naming the property, which is the answer this project gives for the
+     * absent datasource and the absent signing key too.
+     *
+     * <p>An {@code ApplicationContextRunner} rather than the {@code Binder}
+     * used above, because the handler that enforces this is applied by the
+     * {@code @ConfigurationProperties} machinery and not by a bare bind.
+     */
+    @Test
+    void refusesToStartOnAStaleRateLimitProperty() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(BindRateLimits.class)
+                .withPropertyValues("app.rate-limit.enabled=false")
+                .run(context -> assertThat(context)
+                        .hasFailed()
+                        .getFailure()
+                        .rootCause()
+                        .hasMessageContaining("app.rate-limit.enabled")
+                        .hasMessageContaining("left unbound"));
+    }
+
+    @Test
+    void startsNormallyOnThePropertiesItDoesDefine() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(BindRateLimits.class)
+                .withPropertyValues(
+                        "app.rate-limit.refuse-requests=false",
+                        "app.rate-limit.registration-emails-per-recipient=100000")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableConfigurationProperties(RateLimitProperties.class)
+    static class BindRateLimits {
     }
 
     @Test

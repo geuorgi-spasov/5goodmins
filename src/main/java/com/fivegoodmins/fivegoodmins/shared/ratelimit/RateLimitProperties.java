@@ -44,18 +44,51 @@ import java.time.Duration;
  * retrying and registering again, and far too few to be a nuisance.</li>
  * </ul>
  *
- * <p><strong>{@code enabled} is an incident switch, not a feature flag.</strong>
- * If the limiter ever starts refusing real users -- a stale Cloudflare range
- * collapsing every request onto one bucket is the documented way for that to
- * happen -- turning it off is one environment variable and a restart, rather
- * than a revert and a deploy. It is also what the existing web tests set, so
- * that a suite which POSTs the registration form twenty times is not testing
- * the limiter by accident.
+ * <p><strong>{@code refuse-requests} is an incident switch, and it is named for
+ * exactly what it switches off.</strong> If the limiter ever starts refusing
+ * real users -- a stale Cloudflare range collapsing every request onto one
+ * bucket is the documented way for that to happen -- turning it off should be
+ * one environment variable and a restart rather than a revert and a deploy. It
+ * is read by {@link RateLimitFilter} and nowhere else, because that filter is
+ * the only thing in the application that refuses a request. It is also what the
+ * test suite sets, so that a suite which POSTs the registration form twenty
+ * times is not testing the limiter by accident.
+ *
+ * <p><strong>It does not reach the per-recipient mail cap, and that cap has no
+ * switch of its own either.</strong> This is the paragraph
+ * {@code RateLimitFilter} points at, so it is worth being exact. The flag was
+ * called {@code enabled} and did disarm all three buckets, which was wrong for
+ * the reason {@link RateLimitScope} states: two of them refuse a request, one
+ * refuses a send. Only an address-keyed bucket can misfire against a real user,
+ * because only those are keyed on something identifying the person making the
+ * request; the mail cap is keyed on the <em>recipient</em> and cannot refuse a
+ * client anything. So the one situation this switch exists for was also the
+ * situation in which flipping it turned {@code /register} back into a mail
+ * cannon -- with the per-address bucket going off at the same moment, leaving
+ * nothing bounding outbound mail at all. A flag that disarmed the cap would be
+ * reached for in precisely the wrong moment, so there is none. To relax the cap,
+ * change the number; the test suite raises it rather than switching it off, for
+ * that reason.
+ *
+ * <p><strong>{@code ignoreUnknownFields = false}, which is why a stale
+ * {@code app.rate-limit.*} variable fails startup instead of doing
+ * nothing.</strong> Spring ignores unknown configuration properties, so when
+ * {@code enabled} was renamed, any environment still setting
+ * {@code APP_RATE_LIMIT_ENABLED} would have bound it to nothing and said
+ * nothing -- and the limiter would have come back on, silently, at the next
+ * deploy. That is the same class of failure as a missing datasource looking
+ * like a dead database, and it gets the same answer this project gives
+ * everywhere else: fail at startup, naming the property. The message is
+ * literally {@code The elements [app.rate-limit.enabled] were left unbound},
+ * and on Railway a container that will not start never takes over from the one
+ * already running, so the cost of being wrong here is a refused deploy rather
+ * than a broken site. The price is that every key under this prefix must be a
+ * component of this record -- which is the point.
  *
  * <p>{@code max-tracked-keys} bounds each scope's bucket store; see
  * {@link RateLimiter} for what eviction costs.
  */
-@ConfigurationProperties("app.rate-limit")
+@ConfigurationProperties(prefix = "app.rate-limit", ignoreUnknownFields = false)
 @Validated
 public record RateLimitProperties(
 
