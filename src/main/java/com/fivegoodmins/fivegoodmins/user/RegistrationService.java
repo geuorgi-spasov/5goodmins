@@ -1,13 +1,12 @@
 package com.fivegoodmins.fivegoodmins.user;
 
-import com.fivegoodmins.fivegoodmins.action.ActionRepository;
+import com.fivegoodmins.fivegoodmins.action.ActionQueries;
 import com.fivegoodmins.fivegoodmins.shared.token.SignedTokenService;
 import com.fivegoodmins.fivegoodmins.shared.token.TokenPurpose;
 import com.fivegoodmins.fivegoodmins.shared.token.TokenVerification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.data.domain.Limit;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -101,30 +100,28 @@ public class RegistrationService {
      * a taste of the site rather than the site: a longer list in a first email
      * is a longer thing not to read.
      */
-    private static final Limit WELCOME_ACTIONS = Limit.of(5);
+    private static final int WELCOME_ACTIONS = 5;
 
     private final AppUserRepository users;
-    private final ActionRepository actions;
+    private final ActionQueries actions;
     private final PasswordEncoder passwordEncoder;
     private final SignedTokenService tokens;
     private final ApplicationEventPublisher events;
     private final Clock clock;
 
     /**
-     * {@code ActionRepository} is the one dependency here that crosses a
-     * feature boundary, and it is worth naming rather than leaving to be
-     * noticed in review. The welcome email's content is actions (ADR-005), so
-     * something in this flow has to read them; the only choice is where.
-     * Reading them in the listener would put the query on the mail pool's
-     * single thread and outside any transaction; reading them here keeps
-     * ADR-005's rule that the event carries values rather than entities. The
-     * cost is that {@code user/} knows {@code action/}'s repository rather than
-     * a service of its own -- acceptable while {@code action/} has no service
-     * and no invariants to protect, and a dependency that moves to that service
-     * on the day it exists.
+     * {@link ActionQueries} rather than {@code action/}'s repository, which is
+     * what this took first. The welcome email's content is actions (ADR-005),
+     * so something in this flow has to read them, and reading them here rather
+     * than in the listener is what keeps the query inside a transaction and off
+     * the mail pool's single thread. What {@code user/} needs is one query
+     * though, not another feature's storage: handed the repository it would
+     * also have been handed every method on {@code JpaRepository}, and
+     * ADR-003's claim that extracting a module stays trivial only holds while
+     * the surface another feature touches is the one deliberately offered.
      */
     RegistrationService(AppUserRepository users,
-                        ActionRepository actions,
+                        ActionQueries actions,
                         PasswordEncoder passwordEncoder,
                         SignedTokenService tokens,
                         ApplicationEventPublisher events,
@@ -374,7 +371,7 @@ public class RegistrationService {
                 user.getEmail(),
                 user.getDisplayName(),
                 localeOf(user),
-                actions.findNewestActive(now, WELCOME_ACTIONS)));
+                actions.newestActive(now, WELCOME_ACTIONS)));
 
         return new EmailVerificationOutcome.Verified(userId);
     }

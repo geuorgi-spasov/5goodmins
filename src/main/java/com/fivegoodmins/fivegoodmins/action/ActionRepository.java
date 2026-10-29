@@ -53,10 +53,17 @@ public interface ActionRepository extends JpaRepository<Action, Long> {
      *
      * <p>{@code Limit} rather than {@code Pageable}: there is no page, no offset
      * and no total to pay for. Five is a cap, not a window.
+     *
+     * <p><strong>The description is cut to 200 characters in SQL</strong>, which
+     * is {@link ActionSummary#EXCERPT_CHARS} written again as a literal because
+     * JPQL cannot read a constant — change both together. Reading a 5,000
+     * character column in order to display 140 of it is affordable once per
+     * account verification and not once per subscriber per day, which is the
+     * shape the digest will reuse.
      */
     @Query("""
             select new com.fivegoodmins.fivegoodmins.action.ActionSummary(
-                       a.id, a.title, a.actionType, a.description)
+                       a.id, a.title, a.actionType, substring(a.description, 1, 200))
             from Action a
             where a.status = com.fivegoodmins.fivegoodmins.action.ActionStatus.PUBLISHED
               and a.endsAt > :now

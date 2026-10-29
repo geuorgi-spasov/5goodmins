@@ -1,8 +1,6 @@
 package com.fivegoodmins.fivegoodmins.user;
 
 import com.fivegoodmins.fivegoodmins.action.ActionPaths;
-import com.fivegoodmins.fivegoodmins.action.ActionSummary;
-import com.fivegoodmins.fivegoodmins.action.ActionType;
 import com.fivegoodmins.fivegoodmins.shared.AuthPaths;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailComposer;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailConfig;
@@ -10,6 +8,7 @@ import com.fivegoodmins.fivegoodmins.shared.email.EmailMessage;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailProperties;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailSender;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailTemplate;
+import com.fivegoodmins.fivegoodmins.shared.ratelimit.RateLimiter;
 import com.fivegoodmins.fivegoodmins.shared.token.TokenPurpose;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,7 +20,6 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -100,11 +98,13 @@ class RegistrationEmailListener {
     private final EmailSender sender;
     private final EmailProperties properties;
     private final AsyncTaskExecutor emailExecutor;
+    private final RateLimiter rateLimiter;
 
     RegistrationEmailListener(EmailComposer composer,
                               EmailSender sender,
                               EmailProperties properties,
-                              @Qualifier(EmailConfig.EMAIL_EXECUTOR) AsyncTaskExecutor emailExecutor) {
+                              @Qualifier(EmailConfig.EMAIL_EXECUTOR) AsyncTaskExecutor emailExecutor,
+                              RateLimiter rateLimiter) {
         this.composer = composer;
         this.sender = sender;
         this.properties = properties;
@@ -112,6 +112,7 @@ class RegistrationEmailListener {
         // AsyncTaskExecutor, so by type this is ambiguous -- and the wrong one
         // is the unbounded pool that serves the web layer.
         this.emailExecutor = emailExecutor;
+        this.rateLimiter = rateLimiter;
     }
 
     /**
@@ -150,6 +151,14 @@ class RegistrationEmailListener {
      * never arrives.
      */
     private void sendNow(RegistrationEmailEvent event) {
+        if (!mayMail(event)) {
+            // Not a failure, and not logged as one: the cap did its job. The id
+            // and never the address, for the same reason as every other log
+            // line here.
+            log.warn("suppressed the {} email for account {}: this recipient's daily cap is spent",
+                    event.getClass().getSimpleName(), event.userId());
+            return;
+        }
         try {
             sender.send(compose(event));
             log.info("sent the {} email for account {}",
@@ -159,6 +168,48 @@ class RegistrationEmailListener {
             // token in a log file is a verification somebody else can perform.
             log.error("failed to send the registration email for account {}", event.userId(), failed);
         }
+    }
+
+    /**
+     * ADR-002's per-recipient cap on registration email, applied here rather
+     * than in {@code RateLimitFilter} where it started.
+     *
+     * <p><strong>Why it moved.</strong> Keyed on the submitted address, a cap
+     * that refuses the <em>request</em> lets three POSTs naming
+     * {@code victim@example.com} lock the real owner of that address out of
+     * registering for a day -- the denial-of-service weapon ADR-002 rejects
+     * account lockout for, rebuilt on the registration form, and reachable
+     * without a session or a CSRF token because the filter sits in front of
+     * {@code CsrfFilter}. The cap's own stated job is to protect a stranger's
+     * inbox rather than this server, so the send is where it belongs: the
+     * mailbox is still protected, the owner is refused nothing, and
+     * {@code /register} keeps the one neutral response every address must get.
+     *
+     * <p><strong>What it costs, stated plainly.</strong> A suppressed send is
+     * an email that never arrives, and the recovery on page 8 of the frontend
+     * brief -- register again -- will not produce one either until the window
+     * passes. So an attacker can still deny a targeted address its
+     * <em>email</em> for a day; what they can no longer do is deny it the
+     * account. That is a strictly smaller weapon and it is the smallest one
+     * available, because no cap on mail to an address can both bound the mail
+     * and guarantee the next message gets through.
+     *
+     * <p><strong>The welcome email is exempt</strong>, because it cannot be
+     * used as a cannon: reaching it requires a valid signed token for that
+     * account, which only the mailbox's reader has. Capping it would mean a
+     * user who confirms after an attacker has spent the allowance is welcomed
+     * by silence.
+     *
+     * <p>The address is normalized again here rather than trusted. Both
+     * registration events carry it read back from the row, so it is already
+     * canonical -- but a cap bypassed by a capital letter is the kind of
+     * defect that survives review, and this costs one call.
+     */
+    private boolean mayMail(RegistrationEmailEvent event) {
+        if (event instanceof RegistrationEmailEvent.Welcome) {
+            return true;
+        }
+        return rateLimiter.allowRegistrationEmail(AppUser.normalizeEmail(event.email()));
     }
 
     private EmailMessage compose(RegistrationEmailEvent event) {
@@ -184,45 +235,18 @@ class RegistrationEmailListener {
                     welcome.email(),
                     welcome.locale(),
                     WELCOME,
+                    // The projections go straight to the template. There was a
+                    // view record here that added an absolute link per action,
+                    // pointing at a detail page that is page 2 of the frontend
+                    // brief and does not exist -- five dead links in the first
+                    // email a confirmed user receives. The actions are listed
+                    // as text now and the one link is the call to action.
                     Map.of("displayName", welcome.displayName(),
-                            "actions", linked(welcome.actions()),
+                            "actions", welcome.actions(),
                             "actionsUrl", url(ActionPaths.LIST)));
         };
     }
 
-    /**
-     * Turns the projections the event carried into what the template renders:
-     * the same fields plus an absolute link.
-     *
-     * <p><strong>The URL is built here, not in the template.</strong> Every
-     * other link in every other email is assembled in this class, from
-     * {@link ActionPaths} and the configured base URL, for a reason that is
-     * easy to forget in a template: {@code ${siteUrl + '/actions/' + id}} is a
-     * route spelled out in a file nobody greps when the route changes. Doing it
-     * here means the compiler and {@link ActionPaths} are both involved.
-     *
-     * <p>The type stays an enum rather than becoming a label, because the label
-     * belongs to the message bundle (ADR-008) and the template resolves it as
-     * {@code #{${'actionType.' + action.actionType}}}. Translating it in Java
-     * would put a user-facing string in a {@code switch}.
-     */
-    private List<WelcomeAction> linked(List<ActionSummary> actions) {
-        return actions.stream()
-                .map(action -> new WelcomeAction(
-                        action.title(),
-                        action.actionType(),
-                        action.description(),
-                        url(ActionPaths.detail(action.id()))))
-                .toList();
-    }
-
-    /**
-     * One action as the welcome email shows it. Nested and private: it is this
-     * template's view model and nothing else's, and the day the digest needs a
-     * similar one it will need different fields.
-     */
-    private record WelcomeAction(String title, ActionType actionType, String description, String url) {
-    }
 
     /**
      * {@code UriComponentsBuilder} rather than string concatenation, so the

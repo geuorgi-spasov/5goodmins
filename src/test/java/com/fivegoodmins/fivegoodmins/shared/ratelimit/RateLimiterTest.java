@@ -131,11 +131,11 @@ class RateLimiterTest {
     @Test
     void appliesEachScopesOwnCapacity() {
         for (int attempt = 1; attempt <= 3; attempt++) {
-            assertThat(limiter.tryConsume(RateLimitScope.REGISTRATIONS_PER_EMAIL, "a@b.invalid")
+            assertThat(limiter.tryConsume(RateLimitScope.REGISTRATION_EMAILS_PER_RECIPIENT, "a@b.invalid")
                     .allowed()).isTrue();
         }
 
-        assertThat(limiter.tryConsume(RateLimitScope.REGISTRATIONS_PER_EMAIL, "a@b.invalid").allowed())
+        assertThat(limiter.tryConsume(RateLimitScope.REGISTRATION_EMAILS_PER_RECIPIENT, "a@b.invalid").allowed())
                 .isFalse();
     }
 
@@ -188,6 +188,66 @@ class RateLimiterTest {
         @Override
         public Clock withZone(ZoneId zone) {
             return this;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // The send-side cap, which is the one bucket that answers a question rather
+    // than refusing a request.
+    // -----------------------------------------------------------------------
+
+    @Test
+    void allowsRegistrationEmailUpToTheRecipientsCapAndThenRefuses() {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            assertThat(limiter.allowRegistrationEmail("ivan@example.invalid"))
+                    .as("email %d of 3", attempt)
+                    .isTrue();
+        }
+
+        assertThat(limiter.allowRegistrationEmail("ivan@example.invalid")).isFalse();
+    }
+
+    @Test
+    void capsEachRecipientSeparately() {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            limiter.allowRegistrationEmail("ivan@example.invalid");
+        }
+
+        assertThat(limiter.allowRegistrationEmail("maya@example.invalid")).isTrue();
+    }
+
+    /**
+     * The recipient cap and the per-address request cap must not share a
+     * bucket. They do not share a key either, but a scope mix-up would make a
+     * registering client's own allowance decide whether a stranger's inbox is
+     * protected.
+     */
+    @Test
+    void keepsTheRecipientCapOutOfTheRequestBuckets() {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            limiter.allowRegistrationEmail(KEY);
+        }
+
+        assertThat(limiter.tryConsume(RateLimitScope.REGISTRATIONS_PER_ADDRESS, KEY).allowed())
+                .isTrue();
+    }
+
+    /**
+     * The incident switch lives in {@code tryConsume}, so every caller is
+     * covered by it and none can forget to ask. Asserted on both kinds of
+     * caller, because the first version checked it in the filter and the
+     * send-side cap would have stayed on.
+     */
+    @Test
+    void allowsEverythingWhenSwitchedOff() {
+        RateLimiter off = new RateLimiter(
+                new RateLimitProperties(false, 1, WINDOW, 1, Duration.ofHours(1),
+                        1, Duration.ofHours(24), 20_000),
+                clock);
+
+        for (int attempt = 1; attempt <= 50; attempt++) {
+            assertThat(off.tryConsume(RateLimitScope.LOGIN_ATTEMPTS, KEY).allowed()).isTrue();
+            assertThat(off.allowRegistrationEmail("ivan@example.invalid")).isTrue();
         }
     }
 }

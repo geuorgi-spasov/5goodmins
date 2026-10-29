@@ -1062,17 +1062,70 @@ Ten registrations an hour from one address exists only for shared addresses
 again — an office or a classroom signing up after a talk. Registration is a
 once-ever act, so any number above one is there for that case.
 
-The per-email bucket protects **somebody else's inbox**. Registering over an
-address that exists but is unconfirmed replaces that row and emails its owner a
-fresh link — which is deliberate, because it is the resend mechanism, and there
-is no resend form. Without a cap keyed on the address, the registration form is
-a mail cannon anyone can point at a stranger: one request, one email, repeat.
-Three a day is enough for someone who really is registering, failing and
-registering again, and far too few to be a nuisance.
+The per-recipient bucket protects **somebody else's inbox**. Registering over
+an address that exists but is unconfirmed replaces that row and emails its
+owner a fresh link — which is deliberate, because it is the resend mechanism,
+and there is no resend form. Without a cap keyed on the address, the
+registration form is a mail cannon anyone can point at a stranger: one request,
+one email, repeat. Three a day is enough for someone who really is registering,
+failing and registering again, and far too few to be a nuisance.
 
-That one is also the reason the rejection log line does not contain the email
+**And the two caps are enforced in different places, which is the part worth
+the question.** The per-address one refuses the request, in the filter. The
+per-recipient one refuses the *send*, in the email listener. See the next
+answer — it is the best thing in this section.
+
+The second one is also why the rejection log line does not contain the email
 address. The login page refuses to say whether an address has an account here;
 a log file that answers the same question is the same leak, written down.
+
+### Q: You said lockout is a DoS weapon. Did you avoid building one? **[DEEP]**
+
+Not on the first attempt, no. This is the best finding anyone has given me on
+this project and I would rather tell it than be asked.
+
+I rejected account lockout in ADR-002 for a specific reason, written down:
+*it turns the login form into a denial-of-service weapon against anyone whose
+email is known.* Then I built the per-recipient registration cap **in the
+filter**, keyed on the submitted email address. Three POSTs naming
+`victim@example.com` and the real owner of that address could not register for
+twenty-four hours — they got a bare 429. No session and no CSRF token needed,
+because the limiter sits in front of `CsrfFilter`, so even a request that
+Spring Security was about to refuse had already spent the victim's allowance.
+Attacker cost was three of their own ten hourly requests, so three victims an
+hour from one address, and an IPv6 `/64` is a fresh bucket.
+
+That is the same weapon. Same mechanism, different form. I had written the
+argument against it twice and then implemented it anyway, which is worth
+sitting with: the reasoning was in the ADR, and what was missing was asking
+*which key* each bucket used and *who* could name it.
+
+**The fix came out of the bucket's own stated purpose.** It exists to protect a
+stranger's inbox, not my server. So it belongs on the send, not on the request:
+when the allowance is spent, suppress the email and still return the neutral
+"check your inbox" page. The inbox is bounded exactly as before. The owner is
+refused nothing. And `/register`'s single answer for every address survives —
+which the 429 had also broken, because it was a third response the form could
+produce, keyed on request history rather than on the address.
+
+**What it still costs, because this is not a clean win.** A suppressed send is
+an email that never arrives, and the recovery the "check your inbox" page
+offers — register again — will not produce one either until the window passes.
+So an attacker can still deny a targeted address its *email* for a day. What
+they can no longer do is deny it the *account*. That is a strictly smaller
+weapon, and I think it is the smallest one available: no cap on mail to an
+address can both bound the mail and promise that the next message gets through.
+
+**The general rule I took from it**, which is the reusable part: a bucket that
+can refuse a request may only be keyed on something the requester cannot choose
+on somebody else's behalf. That leaves the client address. Anything keyed on a
+value a stranger can type belongs on the side effect, not on the response.
+
+Two things fell out of the fix for free. The filter reads no request parameter
+any more, so it never parses a request body — the multipart caveat the first
+version needed is gone. And the welcome email is exempt from the cap, because
+it cannot be used as a cannon: reaching it requires a valid signed token for
+that account, which only the mailbox's reader has.
 
 ### Q: How do you key the buckets? **[DEEP]**
 
@@ -1125,12 +1178,29 @@ minutes or asserts nothing about the window.
 
 ### Q: Where do the buckets live, and what breaks? **[WARM]**
 
-In memory, in a Caffeine cache per scope. `bucket4j-core` only — every other
+In memory, in a Caffeine cache per scope. The core module only — every other
 Bucket4j module exists to share buckets across a cluster, and the scheduler
 already assumes exactly one instance, so a distributed bucket store would
 encode that assumption a second time in a dependency I had rejected.
 
-What breaks, stated rather than discovered: **every deploy resets every
+A small trap worth knowing if you ever add Bucket4j: `bucket4j-core` looks like
+the artifact and is a dead line that stops at 8.10.1. From 8.11 the artifacts
+are split by target JDK, so on Java 21 it is `bucket4j_jdk17-core`. I pinned
+the dead one at what looked like its newest release and a reviewer caught it.
+
+One more failure mode, and I had the sign wrong on it at first. If the valve
+ever stops short of the real client — a stale Cloudflare range, a change at the
+edge — every request shares one bucket, which means twenty login attempts per
+fifteen minutes *for the entire site*. I had written that down as
+"over-restrictive, which is the right direction for a limiter to break in."
+That is wrong: it is a site-wide login outage whose symptom is "login is broken
+for everybody". It is still better than the limit being absent, and it is one
+log line to diagnose, because the refusal prints the resolved key and a
+Cloudflare edge address there *is* the diagnosis. But the real mitigation is at
+the edge — restrict the origin to Cloudflare so the chain is always the one the
+configuration describes — not in the application.
+
+What else breaks, stated rather than discovered: **every deploy resets every
 bucket.** At one deploy a day against a fifteen-minute window that is a
 rounding error. It stops being one the day a second instance exists — and on
 that day the limiter and the digest scheduler need the same fix.

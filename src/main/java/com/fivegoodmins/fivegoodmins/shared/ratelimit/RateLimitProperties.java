@@ -36,7 +36,7 @@ import java.time.Duration;
  * Registration is a once-ever act, so any number above one is there purely for
  * shared addresses -- a classroom or an office signing up after a talk. Ten an
  * hour covers that and still stops a single host enumerating.</li>
- * <li><strong>{@code registrations-per-email = 3} per day.</strong> This is
+ * <li><strong>{@code registration-emails-per-recipient = 3} per day.</strong> This is
  * the bucket that matters, and the reason ADR-002 asks for a second one:
  * {@code register} emails the owner of an unverified address once per request,
  * so without a per-address cap the form is a mail cannon aimed at somebody
@@ -67,8 +67,8 @@ public record RateLimitProperties(
         @DefaultValue("10") @Min(1) int registrationsPerAddress,
         @DefaultValue("1h") @NotNull Duration registrationsPerAddressWindow,
 
-        @DefaultValue("3") @Min(1) int registrationsPerEmail,
-        @DefaultValue("24h") @NotNull Duration registrationsPerEmailWindow,
+        @DefaultValue("3") @Min(1) int registrationEmailsPerRecipient,
+        @DefaultValue("24h") @NotNull Duration registrationEmailsPerRecipientWindow,
 
         @DefaultValue("20000") @Min(1) int maxTrackedKeys) {
 
@@ -76,7 +76,7 @@ public record RateLimitProperties(
         return switch (scope) {
             case LOGIN_ATTEMPTS -> loginAttempts;
             case REGISTRATIONS_PER_ADDRESS -> registrationsPerAddress;
-            case REGISTRATIONS_PER_EMAIL -> registrationsPerEmail;
+            case REGISTRATION_EMAILS_PER_RECIPIENT -> registrationEmailsPerRecipient;
         };
     }
 
@@ -84,7 +84,7 @@ public record RateLimitProperties(
         return switch (scope) {
             case LOGIN_ATTEMPTS -> loginWindow;
             case REGISTRATIONS_PER_ADDRESS -> registrationsPerAddressWindow;
-            case REGISTRATIONS_PER_EMAIL -> registrationsPerEmailWindow;
+            case REGISTRATION_EMAILS_PER_RECIPIENT -> registrationEmailsPerRecipientWindow;
         };
     }
 }

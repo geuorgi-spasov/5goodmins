@@ -40,8 +40,8 @@ class RateLimitPropertiesTest {
         assertThat(limits.registrationsPerAddress()).isEqualTo(10);
         assertThat(limits.registrationsPerAddressWindow()).isEqualTo(Duration.ofHours(1));
 
-        assertThat(limits.registrationsPerEmail()).isEqualTo(3);
-        assertThat(limits.registrationsPerEmailWindow()).isEqualTo(Duration.ofHours(24));
+        assertThat(limits.registrationEmailsPerRecipient()).isEqualTo(3);
+        assertThat(limits.registrationEmailsPerRecipientWindow()).isEqualTo(Duration.ofHours(24));
 
         assertThat(limits.maxTrackedKeys()).isEqualTo(20_000);
     }
@@ -64,13 +64,13 @@ class RateLimitPropertiesTest {
 
         assertThat(limits.capacityOf(RateLimitScope.LOGIN_ATTEMPTS)).isEqualTo(20);
         assertThat(limits.capacityOf(RateLimitScope.REGISTRATIONS_PER_ADDRESS)).isEqualTo(10);
-        assertThat(limits.capacityOf(RateLimitScope.REGISTRATIONS_PER_EMAIL)).isEqualTo(3);
+        assertThat(limits.capacityOf(RateLimitScope.REGISTRATION_EMAILS_PER_RECIPIENT)).isEqualTo(3);
 
         assertThat(limits.windowOf(RateLimitScope.LOGIN_ATTEMPTS))
                 .isEqualTo(Duration.ofMinutes(15));
         assertThat(limits.windowOf(RateLimitScope.REGISTRATIONS_PER_ADDRESS))
                 .isEqualTo(Duration.ofHours(1));
-        assertThat(limits.windowOf(RateLimitScope.REGISTRATIONS_PER_EMAIL))
+        assertThat(limits.windowOf(RateLimitScope.REGISTRATION_EMAILS_PER_RECIPIENT))
                 .isEqualTo(Duration.ofHours(24));
     }
 }

@@ -1,7 +1,6 @@
 package com.fivegoodmins.fivegoodmins.shared.ratelimit;
 
 import com.fivegoodmins.fivegoodmins.shared.AuthPaths;
-import com.fivegoodmins.fivegoodmins.user.AppUser;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,7 +15,6 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -48,6 +46,23 @@ import java.util.List;
  * would mean a user-facing string in Java, which ADR-008 forbids, or a blank
  * page, which tells a human nothing.
  *
+ * <p><strong>Nothing in here is keyed on anything a stranger can name for
+ * somebody else, and that is a correction rather than a design note.</strong>
+ * The first version of this filter also spent a bucket keyed on the submitted
+ * email address, which made three POSTs enough to lock the real owner of a
+ * known address out of registering for a day -- account lockout rebuilt on the
+ * registration form, against the explicit reasoning in ADR-002. That cap still
+ * exists and still protects the same inbox; it now refuses the <em>send</em>
+ * instead, in {@code RegistrationEmailListener}. The rule this filter keeps is
+ * narrow and worth stating: a bucket that can refuse a request may only be
+ * keyed on something the requester cannot choose on somebody else's behalf,
+ * which leaves the client address.
+ *
+ * <p>Two things fall out of that. This filter reads no request parameter, so it
+ * never parses a request body and the multipart caveat the first version needed
+ * is gone. And {@code POST /register} has exactly one response it can produce
+ * here, so the neutral page ADR-002 requires for every address is intact.
+ *
  * <p><strong>The rejection log line is the measurement ADR-002 asked for.</strong>
  * It reports the resolved bucket key next to the raw remote address, which is
  * the only thing in the application that reports what the valve resolved -- so
@@ -63,12 +78,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final Logger log = LoggerFactory.getLogger(RateLimitFilter.class);
 
     /**
-     * The field name on the registration form. The same string the form posts;
-     * {@code RegistrationForm.email} is bound from it.
-     */
-    private static final String EMAIL_PARAMETER = "email";
-
-    /**
      * Spring Security's own matchers rather than a string comparison against
      * {@code getRequestURI()}, so that this filter and the authentication
      * filter it sits in front of cannot disagree about what "POST /login"
@@ -82,7 +91,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
             PathPatternRequestMatcher.pathPattern(HttpMethod.POST, AuthPaths.REGISTER);
 
     private final RateLimiter limiter;
-    private final boolean enabled;
 
     /**
      * Constructed by {@code SecurityConfig} rather than declared as a bean, and
@@ -93,14 +101,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
      * first registration off. No bean, no dance, and the filter's position is
      * declared in the one file that declares every other filter's position.
      */
-    public RateLimitFilter(RateLimiter limiter, boolean enabled) {
+    public RateLimitFilter(RateLimiter limiter) {
         this.limiter = limiter;
-        this.enabled = enabled;
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !enabled || !(LOGIN.matches(request) || REGISTER.matches(request));
+        return !(LOGIN.matches(request) || REGISTER.matches(request));
     }
 
     @Override
@@ -117,33 +124,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
-    /**
-     * {@code /register} spends from two buckets, and spends the per-address one
-     * first on purpose: a request refused for flooding one mailbox has still
-     * been made by that client, and should count against them.
-     */
     private static List<Attempt> attemptsFor(HttpServletRequest request) {
         String client = ClientAddress.bucketKey(request.getRemoteAddr());
-        if (LOGIN.matches(request)) {
-            return List.of(new Attempt(RateLimitScope.LOGIN_ATTEMPTS, client));
-        }
-
-        List<Attempt> attempts = new ArrayList<>(2);
-        attempts.add(new Attempt(RateLimitScope.REGISTRATIONS_PER_ADDRESS, client));
-        // AppUser.normalizeEmail, not a lowercase of our own: the service keys
-        // the account on the normalized form, so any other normalization here
-        // would let Alice@example.com and alice@example.com mail one inbox
-        // twice per window.
-        //
-        // Reading a parameter in a filter parses the request body, and Tomcat
-        // caches the result, so the controller still binds the form normally.
-        // That holds because this form is urlencoded; it would not for a
-        // multipart one, and this is the comment that says why that matters.
-        String email = AppUser.normalizeEmail(request.getParameter(EMAIL_PARAMETER));
-        if (!email.isEmpty()) {
-            attempts.add(new Attempt(RateLimitScope.REGISTRATIONS_PER_EMAIL, email));
-        }
-        return attempts;
+        RateLimitScope scope = LOGIN.matches(request)
+                ? RateLimitScope.LOGIN_ATTEMPTS
+                : RateLimitScope.REGISTRATIONS_PER_ADDRESS;
+        return List.of(new Attempt(scope, client));
     }
 
     private static void refuse(HttpServletRequest request,
@@ -152,22 +138,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                RateLimiter.Verdict verdict) throws IOException {
         long seconds = verdict.retryAfterSeconds();
         log.warn("rate limit refused {}: bucket key [{}], remote address [{}], retry after {}s",
-                attempt.scope(), attempt.loggableKey(), request.getRemoteAddr(), seconds);
+                attempt.scope(), attempt.key(), request.getRemoteAddr(), seconds);
         response.setHeader(HttpHeaders.RETRY_AFTER, Long.toString(seconds));
         response.sendError(HttpStatus.TOO_MANY_REQUESTS.value());
     }
 
+    /**
+     * One bucket to spend. A list of one today, and a list rather than a scalar
+     * because the loop in {@code doFilterInternal} is the part that would have
+     * to be right again the day a second request-refusing bucket is justified.
+     */
     private record Attempt(RateLimitScope scope, String key) {
-
-        /**
-         * The key, except for the bucket whose key is somebody's email address.
-         * Registration already refuses to say whether an address has an account
-         * (ADR-002), and a log file that answers the question the login page
-         * will not is the same leak written down. The remote address is logged
-         * next to this and is what an operator would act on anyway.
-         */
-        String loggableKey() {
-            return scope == RateLimitScope.REGISTRATIONS_PER_EMAIL ? "(email not logged)" : key;
-        }
     }
 }

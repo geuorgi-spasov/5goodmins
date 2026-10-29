@@ -2,6 +2,7 @@ package com.fivegoodmins.fivegoodmins.user;
 
 import com.fivegoodmins.fivegoodmins.TestcontainersConfiguration;
 import com.fivegoodmins.fivegoodmins.action.Action;
+import com.fivegoodmins.fivegoodmins.action.ActionQueries;
 import com.fivegoodmins.fivegoodmins.action.ActionRepository;
 import com.fivegoodmins.fivegoodmins.action.ActionSummary;
 import com.fivegoodmins.fivegoodmins.action.ActionType;
@@ -53,6 +54,10 @@ import static org.assertj.core.api.InstanceOfAssertFactories.list;
 @Import({TestcontainersConfiguration.class,
         RegistrationServiceTest.Collaborators.class,
         SignedTokenService.class,
+        // @DataJpaTest scans repositories, not @Service beans, so the read side
+        // of action/ has to be imported by name alongside the service that
+        // takes it.
+        ActionQueries.class,
         RegistrationService.class})
 @DataJpaTest
 class RegistrationServiceTest {

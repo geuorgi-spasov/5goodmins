@@ -38,10 +38,13 @@ Done:
   API in production; verification, "you already have an account" and welcome
   emails, each with a plain-text twin
 - Rate limiting on `/login` and `/register` (see below)
+- A placeholder action listing at `/actions` — no filters, search or paging;
+  it exists because the welcome email links to it
 
 Next, in order:
 
-- Page 1: the action list, which several already-built links point at
+- Page 1 proper: filters, search, paging and the htmx swapping, over the
+  placeholder listing that is there now
 - Subscriptions and preferences, then the daily digest email and unsubscribe
 - Submitting actions and the admin approval queue
 - Seed data, so the deployed site is not an empty page
@@ -138,17 +141,25 @@ Bucket4j on `POST /login` and `POST /register` only, keyed on the client address
 that Tomcat's `RemoteIpValve` resolves — never on a forwarded header, which a
 request straight to the origin could forge.
 
-| Endpoint | Limit | Keyed on |
-|---|---|---|
-| `POST /login` | 20 per 15 minutes | client address |
-| `POST /register` | 10 per hour | client address |
-| `POST /register` | 3 per 24 hours | the submitted email address |
+| Endpoint | Limit | Keyed on | Refuses |
+|---|---|---|---|
+| `POST /login` | 20 per 15 minutes | client address | the request |
+| `POST /register` | 10 per hour | client address | the request |
+| registration email | 3 per 24 hours | the recipient address | **the send** |
 
 The first two are sized for a *shared* address rather than for one person —
-carrier-grade NAT puts a whole mobile network behind a handful of them. The
-third protects somebody else's inbox rather than this server: registering over
-an unconfirmed address emails its owner, so without a per-address cap the form
-is a mail cannon.
+carrier-grade NAT puts a whole mobile network behind a handful of them.
+
+**The third one refuses the send and not the request, and that distinction is
+the whole of it.** It protects somebody else's inbox rather than this server:
+registering over an unconfirmed address emails its owner, so without a cap the
+form is a mail cannon. But keyed on an address anyone can type, a cap that
+refused the *request* would let three POSTs lock the real owner of that address
+out of registering — account lockout, which this project rejects, rebuilt on
+the registration form. So when the allowance is spent the email is suppressed
+and the request still gets the ordinary "check your inbox" page. The general
+rule: a bucket that can refuse a request is only ever keyed on something the
+requester cannot choose on somebody else's behalf.
 
 IPv6 clients are keyed on the `/64` prefix, because a `/128` would give one
 household 2^64 buckets. Buckets live in memory, so **every deploy resets
@@ -157,6 +168,13 @@ scheduler if a second ever exists.
 
 A refusal is `429` with `Retry-After`, through the error dispatch, so it will
 inherit the real error page when that is built.
+
+**If login breaks for everybody, look here first.** The key depends on Tomcat's
+`RemoteIpValve` resolving past Cloudflare's edge to the real client. If it ever
+stops short, every request shares one bucket and the site gets 20 login
+attempts per 15 minutes in total. The refusal log line prints the resolved key,
+so a Cloudflare edge address there is the diagnosis; `APP_RATE_LIMIT_ENABLED=false`
+is the stopgap while the proxy configuration is fixed.
 
 ---
 

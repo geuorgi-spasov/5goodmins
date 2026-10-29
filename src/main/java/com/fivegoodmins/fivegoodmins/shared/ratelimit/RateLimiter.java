@@ -86,6 +86,12 @@ public class RateLimiter {
      * and, eventually, a sentence on the page the user lands on.
      */
     Verdict tryConsume(RateLimitScope scope, String key) {
+        if (!properties.enabled()) {
+            // The incident switch, checked here rather than at each caller, so
+            // there is one place that can turn the limiter off and no caller
+            // that can forget to ask.
+            return Verdict.ALLOWED;
+        }
         Bucket bucket = stores.get(scope).get(key, ignored -> newBucket(scope));
         ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
         return probe.isConsumed()
@@ -109,6 +115,32 @@ public class RateLimiter {
                 .addLimit(limit -> limit.capacity(capacity).refillGreedy(capacity, window))
                 .withCustomTimePrecision(timeMeter)
                 .build();
+    }
+
+    /**
+     * Whether a registration email may be sent to {@code recipient}, spending
+     * one of that address's allowance if so.
+     *
+     * <p><strong>This is the one bucket that refuses a send rather than a
+     * request, and the asymmetry is deliberate.</strong> Its job is to stop
+     * {@code /register} being a mail cannon pointed at somebody else's inbox
+     * (ADR-002), and the key is therefore an address an attacker can simply
+     * type. A bucket like that must never be able to refuse its owner
+     * anything: three POSTs naming {@code victim@example.com} would otherwise
+     * lock the real owner out of registering for a day, which is precisely the
+     * denial-of-service weapon ADR-002 rejects account lockout for. Refusing
+     * the send protects the same inbox, costs its owner nothing, and leaves
+     * {@code /register}'s deliberately neutral response untouched.
+     *
+     * <p>Exposed as a question about registration email rather than as the
+     * scope and the key, so the mail layer never learns there are scopes.
+     *
+     * @param recipient the address as stored, already normalized. Case and
+     *                  whitespace variants must collapse to one key or the cap
+     *                  is bypassed with a capital letter.
+     */
+    public boolean allowRegistrationEmail(String recipient) {
+        return tryConsume(RateLimitScope.REGISTRATION_EMAILS_PER_RECIPIENT, recipient).allowed();
     }
 
     /**

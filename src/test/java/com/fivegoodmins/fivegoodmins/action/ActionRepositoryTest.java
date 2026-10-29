@@ -296,4 +296,38 @@ class ActionRepositoryTest {
 
         assertThat(actions.findNewestActive(NOW, Limit.of(5))).isEmpty();
     }
+
+    /**
+     * The projection carries an excerpt, not the column. A description is
+     * {@code text} and may be 5,000 characters; reading all of it to display
+     * 140 is affordable once per account verification and not once per
+     * subscriber per day, which is the shape the digest will reuse.
+     */
+    @Test
+    void cutsTheDescriptionToAnExcerptInTheQuery() {
+        AppUser author = author("excerpt@seed.example");
+        String paragraph = "Дълго описание. ".repeat(300);
+        Action action = new Action(author, "Дълга акция", paragraph,
+                ActionType.PETITION, NOW.plus(30, ChronoUnit.DAYS));
+        action.publish(NOW.minus(1, ChronoUnit.HOURS));
+        actions.saveAndFlush(action);
+        em.clear();
+
+        ActionSummary summary = actions.findNewestActive(NOW, Limit.of(5)).getFirst();
+
+        assertThat(paragraph.length()).as("the fixture is longer than the cut").isGreaterThan(1000);
+        assertThat(summary.excerpt())
+                .hasSize(ActionSummary.EXCERPT_CHARS)
+                .isEqualTo(paragraph.substring(0, ActionSummary.EXCERPT_CHARS));
+    }
+
+    @Test
+    void leavesAShortDescriptionWhole() {
+        AppUser author = author("short@seed.example");
+        published(author, "Кратка акция", NOW.minus(1, ChronoUnit.HOURS), NOW.plus(30, ChronoUnit.DAYS));
+        em.clear();
+
+        assertThat(actions.findNewestActive(NOW, Limit.of(5)).getFirst().excerpt())
+                .isEqualTo("opisanie");
+    }
 }

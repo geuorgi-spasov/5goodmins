@@ -437,13 +437,13 @@ class RegistrationEmailListenerTest {
         assertThat(message.html())
                 .contains(NAME)
                 .contains("Спаси гората над София")
-                // The link is built from ActionPaths and app.mail.base-url in
-                // the listener, not assembled inside the template.
-                .contains("https://test.invalid/actions/42")
-                .contains("https://test.invalid/actions/43")
-                // The call to action points at the listing, which is the one
-                // link in here that does not depend on an id.
+                // The call to action, and the only link in this email. There
+                // used to be one per action pointing at /actions/{id}, which is
+                // page 2 of the brief and does not exist -- five dead links in
+                // the first email a confirmed user receives.
                 .contains("https://test.invalid/actions")
+                .doesNotContain("https://test.invalid/actions/42")
+                .doesNotContain("https://test.invalid/actions/43")
                 // The type label comes from the bundle, keyed on the enum
                 // constant -- so a new ActionType is two properties lines and
                 // no template change (ADR-017).
@@ -455,7 +455,8 @@ class RegistrationEmailListenerTest {
                 .doesNotContain("/unsubscribe");
         assertThat(message.text())
                 .contains("Спаси гората над София")
-                .contains("https://test.invalid/actions/42")
+                .contains("https://test.invalid/actions")
+                .doesNotContain("https://test.invalid/actions/42")
                 .contains("Петиция")
                 .doesNotContain("<html")
                 .doesNotContain("<td");

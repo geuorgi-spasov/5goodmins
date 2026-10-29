@@ -141,7 +141,7 @@ valid title.
 
 | # | Page | Notes |
 |---|---|---|
-| 1 | **Action list / home** | The main page. Filters: category, region, type, free-text search. Sorted newest first, paginated. Filter changes swap the results list via htmx without a full reload. Needs: filter sidebar (drawer on mobile), result card, pagination, empty state, and an active-filter summary that can be cleared. |
+| 1 | **Action list / home** | *Placeholder built, everything that makes it page 1 is not.* The main page. Filters: category, region, type, free-text search. Sorted newest first, paginated. Filter changes swap the results list via htmx without a full reload. Needs: filter sidebar (drawer on mobile), result card, pagination, empty state, and an active-filter summary that can be cleared. **What exists today** is an unstyled list of the newest twenty published actions at `/actions`, built because the welcome email needs a destination (ADR-005) — no filters, no search, no htmx swapping, no pagination, and titles that are not yet links because the detail page is page 2. Those are absent rather than stubbed: a filter control that silently does nothing is worse than none. |
 | 2 | **Action detail** | Title, category/region/type badges, full description, image, optional embedded video, author link, end date with remaining time, and a prominent outbound call-to-action button ("Sign the petition" etc., label depends on type). **The link is optional — needs a second variant with no CTA button at all.** Secondary: share, report. |
 | 3 | **Poster profile** | Display name, bio, website link, list of that poster's published actions. |
 | 4 | **About** | Static content page. |
@@ -204,6 +204,10 @@ link to opt out of the thing the user is in the middle of doing.
    decision rather than omission (see the paragraph above this list). And there
    is no mention of the daily digest, because the job does not exist yet; that
    line is owed, and it lands with the job rather than with the design.
+   **The actions are listed as text, not as links** — the detail page is page 2,
+   and a first email carrying five links to a page that does not exist is worse
+   than five plain headings. The call to action is the email's only link. When
+   page 2 lands the link goes into this template and the listing together.
 3. **Daily digest** — the flagship email: new actions matching the user's
    subscriptions, each as a title, category/region badges, one line, a link.
    Must survive Gmail, Outlook and Apple Mail.

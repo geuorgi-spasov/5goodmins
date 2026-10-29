@@ -18,8 +18,10 @@
   says "you will now receive a daily digest" is a lie in somebody's inbox until
   it is. The line goes in with the job.
 
-  Model: displayName, actions (title, actionType, description, url), actionsUrl.
-  siteUrl comes from the composer.
+  Model: displayName, actions (ActionSummary: id, title, actionType, excerpt),
+  actionsUrl. siteUrl comes from the composer.
+
+  The actions carry no links, deliberately -- see the note at the title below.
 */-->
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org"
@@ -61,12 +63,17 @@
             <td style="padding:0;">
                 <p class="muted" style="margin:0 0 2px 0; font-size:12px; line-height:18px; text-transform:uppercase; letter-spacing:0.04em; color:#5c6b6b;"
                    th:text="#{${'actionType.' + action.actionType}}">Petition</p>
-                <p style="margin:0 0 4px 0; font-size:17px; line-height:24px; font-weight:700;">
-                    <a th:href="${action.url}" th:text="${action.title}"
-                       style="color:#0f766e; text-decoration:none;">An action</a>
-                </p>
+                <!--/* Not a link. The detail page is page 2 of the brief and
+                       does not exist, and five dead links in the first email a
+                       confirmed user receives is worse than five plain
+                       headings. The link goes here and in the listing template
+                       together, when page 2 lands. */-->
+                <p class="text" style="margin:0 0 4px 0; font-size:17px; line-height:24px; font-weight:700; color:#172424;"
+                   th:text="${action.title}">An action</p>
+                <!--/* Already cut to 200 characters by the query; 140 here. See
+                       ActionSummary.EXCERPT_CHARS before raising this. */-->
                 <p class="muted" style="margin:0; font-size:14px; line-height:21px; color:#5c6b6b;"
-                   th:text="${#strings.abbreviate(action.description, 140)}">One line about it.</p>
+                   th:text="${#strings.abbreviate(action.excerpt, 140)}">One line about it.</p>
             </td>
         </tr>
     </table>

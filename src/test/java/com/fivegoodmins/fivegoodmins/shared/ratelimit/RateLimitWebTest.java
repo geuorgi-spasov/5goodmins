@@ -22,6 +22,7 @@ import static org.springframework.security.test.web.servlet.setup.SecurityMockMv
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -33,8 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * turns it back on, and uses small limits so that a test is four requests
  * rather than twenty-one.
  *
- * <p><strong>Every test uses a client address and an email of its own, and
- * that is load-bearing.</strong> Buckets are process state in a singleton, not
+ * <p><strong>Every test uses a client address of its own, and that is
+ * load-bearing.</strong> Buckets are process state in a singleton, not
  * rows: {@code @Transactional} rolls back the registrations but not the
  * allowance they spent, and the context is shared across methods. Two tests
  * sharing one address would pass or fail depending on execution order, which
@@ -46,7 +47,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "app.rate-limit.enabled=true",
         "app.rate-limit.login-attempts=3",
         "app.rate-limit.registrations-per-address=4",
-        "app.rate-limit.registrations-per-email=2"})
+        // Deliberately the tightest number in the file, so that
+        // neverRefusesARequestOverSomebodyElsesAddress would fail loudly if
+        // this cap ever moved back onto the request.
+        "app.rate-limit.registration-emails-per-recipient=1"})
 @Import(TestcontainersConfiguration.class)
 @Transactional
 class RateLimitWebTest {
@@ -125,38 +129,53 @@ class RateLimitWebTest {
     }
 
     /**
-     * The bucket that protects somebody else's inbox rather than this server
-     * (ADR-002): {@code register} mails the owner of an unverified address once
-     * per request, so the cap has to follow the address across clients. Three
-     * different addresses here, all under the per-client limit of four.
+     * The regression test for the review finding this filter was rewritten
+     * for, and the one assertion in this file that is about something the code
+     * must <em>never</em> do.
+     *
+     * <p>The per-recipient cap used to be spent here, in the filter, keyed on
+     * the submitted address. That made three POSTs naming a stranger's address
+     * enough to lock its real owner out of registering for a day -- the
+     * denial-of-service weapon ADR-002 rejects account lockout for, rebuilt on
+     * the registration form, and reachable with no session and no CSRF token
+     * because this filter sits in front of {@code CsrfFilter}.
+     *
+     * <p>Five requests for one address from five clients, against a cap of
+     * one: every one of them gets the ordinary neutral redirect. The cap still
+     * exists and still bounds the mail, in
+     * {@code RegistrationEmailListener} -- see
+     * {@code RegistrationEmailLimitTest}. Here the only thing being asserted
+     * is that no request is ever refused for an address somebody else named.
      */
     @Test
-    void refusesAThirdRegistrationOfOneAddressEvenFromADifferentClient() throws Exception {
-        String target = "cel@example.invalid";
+    void neverRefusesARequestOverSomebodyElsesAddress() throws Exception {
+        String victim = "zhertva@example.invalid";
 
-        mockMvc.perform(registration("203.0.113.16", target))
-                .andExpect(status().is3xxRedirection());
-        mockMvc.perform(registration("198.51.100.16", target))
-                .andExpect(status().is3xxRedirection());
-
-        mockMvc.perform(registration("192.0.2.16", target))
-                .andExpect(status().isTooManyRequests());
+        for (String client : new String[]{
+                "203.0.113.16", "198.51.100.16", "192.0.2.16", "203.0.113.46", "198.51.100.46"}) {
+            mockMvc.perform(registration(client, victim))
+                    .andExpect(status().is3xxRedirection());
+        }
     }
 
     /**
-     * Case is not a fresh bucket. The service normalizes the address before it
-     * keys an account on it, so anything else here would be a bypass spelled
-     * with a capital letter.
+     * The same thing from the victim's side, and the shape that matters most:
+     * after an attacker has done everything they can, the owner of the address
+     * still gets the page every address gets. A 429 here would both deny them
+     * the account and break the single neutral response ADR-002 requires of
+     * this form.
      */
     @Test
-    void treatsTheSameAddressInADifferentCaseAsTheSameAddress() throws Exception {
-        mockMvc.perform(registration("203.0.113.17", "Maya@Example.Invalid"))
-                .andExpect(status().is3xxRedirection());
-        mockMvc.perform(registration("203.0.113.17", "maya@example.invalid"))
-                .andExpect(status().is3xxRedirection());
+    void leavesTheOwnerOfATargetedAddressTheSamePageEverybodyGets() throws Exception {
+        String victim = "sobstvenik@example.invalid";
 
-        mockMvc.perform(registration("203.0.113.17", "  MAYA@EXAMPLE.INVALID  "))
-                .andExpect(status().isTooManyRequests());
+        mockMvc.perform(registration("203.0.113.17", victim));
+        mockMvc.perform(registration("198.51.100.17", victim));
+        mockMvc.perform(registration("192.0.2.17", victim));
+
+        mockMvc.perform(registration("203.0.113.47", victim))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl(AuthPaths.CHECK_EMAIL));
     }
 
     /**

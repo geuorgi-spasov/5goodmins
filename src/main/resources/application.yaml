@@ -63,17 +63,44 @@ server:
       # arrives on, which is the hop this whole mechanism depends on.
       # trusted-proxies is empty by default and therefore adds.
       #
-      # Tomcat 11 accepts CIDR here as well as the IPv4-only regex that older
-      # writing on this property describes; Boot's own internal-proxies default
-      # is a CIDR list, which is the proof it goes through the same setter.
+      # The CIDR form is documented, not inferred. Tomcat 11 describes both
+      # internalProxies and trustedProxies as "either a comma separated list of
+      # CIDR blocks or a single regular expression", and adds: "Support for
+      # configuration via regular expressions is deprecated and will be removed
+      # in Tomcat 12." So CIDR is the form with a future, and the IPv4-only
+      # regex that older writing on this property describes is the one on a
+      # clock. (An earlier version of this comment justified CIDR by pointing
+      # at Boot's own default being one, which proves nothing about what the
+      # setter accepts -- corrected in review.)
+      #
+      # internal-proxies is deliberately not set, and this was checked rather
+      # than assumed. Boot 4.1.1's default for it, read out of
+      # spring-boot-tomcat's own configuration metadata, is:
+      #   192.168.0.0/16, 172.16.0.0/12, 169.254.0.0/16, fc00::/7,
+      #   10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, fe80::/10, ::1/128
+      # It is a CIDR list and it includes 100.64.0.0/10, the carrier-grade NAT
+      # range container platforms use -- spring-boot#34119, which reported that
+      # range missing from an older regex default, is fixed here. Railway's own
+      # hop is therefore covered by the default and overriding it would only
+      # risk dropping something.
       #
       # Fetched from https://www.cloudflare.com/ips-v4 and /ips-v6 on
-      # 2026-10-29. This list changes rarely and with notice, and a stale copy
-      # fails in the safe direction: the walk stops at the edge again and the
-      # limit becomes global rather than absent. Over-restrictive is the right
-      # way for a limiter to break, which is why this is a committed list and
-      # not a startup fetch -- a fetch would add a boot-time dependency on
-      # Cloudflare's API for a file that changes once a year.
+      # 2026-10-29. A committed list rather than a startup fetch: a fetch adds
+      # a boot-time dependency on Cloudflare's API for a file that changes once
+      # a year with notice.
+      #
+      # HOW THIS FAILS, stated accurately after review. If the walk stops short
+      # of the real client -- a stale list here, or a change at the edge -- then
+      # every request shares one bucket and /login allows twenty attempts per
+      # fifteen minutes FOR THE WHOLE SITE. That is not a safe state and
+      # calling it "over-restrictive, the right direction for a limiter to
+      # break" was wrong: it is a site-wide login outage whose symptom is
+      # "login is broken for everybody". It is still preferable to the limit
+      # being absent, and it is diagnosable in one line, because RateLimitFilter
+      # logs the resolved bucket key on every refusal -- a Cloudflare edge
+      # address there IS the diagnosis. The real mitigation is at the edge, not
+      # here: restrict the origin to Cloudflare so the chain is always the one
+      # this configuration describes.
       trusted-proxies: >-
         173.245.48.0/20, 103.21.244.0/22, 103.22.200.0/22, 103.31.4.0/22,
         141.101.64.0/18, 108.162.192.0/18, 190.93.240.0/20, 188.114.96.0/20,
