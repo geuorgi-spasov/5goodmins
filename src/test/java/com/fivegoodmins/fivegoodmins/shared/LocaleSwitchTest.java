@@ -4,6 +4,9 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.method.HandlerTypePredicate;
 
 import java.util.Locale;
 
@@ -85,6 +88,41 @@ class LocaleSwitchTest {
         // code went straight to the unguarded line.
         assertThat(englishLinkFor("/a%", null)).isEqualTo("?lang=en");
     }
+
+    /**
+     * Pins the one framework behaviour {@link LocaleSwitch}'s decision to stay
+     * unscoped rests on, so the reasoning in its Javadoc cannot quietly rot.
+     *
+     * <p>{@code @ControllerAdvice(annotations = Controller.class)} is the
+     * obvious way to keep this advice off a future {@code @RestController},
+     * and it excludes nothing: {@code @RestController} is itself
+     * meta-annotated {@code @Controller}, and the predicate behind that
+     * attribute matches through {@code AnnotatedElementUtils.hasAnnotation},
+     * which searches meta-annotations. If that ever changes, this fails and
+     * the scoping becomes available.
+     *
+     * <p>This is deliberately <em>not</em> a test that a {@code @RestController}
+     * response carries {@code languageLinks}. That claim is unobservable from
+     * outside: a {@code @ResponseBody} handler returns no {@code ModelAndView},
+     * so proving the advice ran would need a bespoke controller written to
+     * echo its own model back, registered in the application context, which
+     * would fork the context cache for the whole suite to document a cost
+     * already accepted. Three lines with no context prove the same thing.
+     */
+    @Test
+    void scopingTheAdviceByControllerAnnotationWouldNotExcludeARestController() {
+        assertThat(HandlerTypePredicate.forAnnotation(Controller.class).test(JsonApi.class))
+                .as("@RestController is meta-annotated @Controller")
+                .isTrue();
+        assertThat(HandlerTypePredicate.forAnnotation(Controller.class).test(HtmlPage.class))
+                .isTrue();
+    }
+
+    @RestController
+    private static final class JsonApi { }
+
+    @Controller
+    private static final class HtmlPage { }
 
     @Test
     void offersBothLanguagesInTheOrderTheyAreConfigured() {

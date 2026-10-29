@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -58,10 +59,42 @@ class SignedTokenServiceTest {
 
         // The whole point of Base64url without padding: this goes into a link
         // in an HTML email, and +, / and = would each need escaping somewhere
-        // along the way.
+        // along the way. There is now a second consumer of that property with
+        // a quieter failure mode -- see the test below.
         assertThat(token).matches("[0-9]+\\.[0-9]+\\.[A-Za-z0-9_-]+");
         assertThat(token.split("\\.", -1)).hasSize(3);
         assertThat(token).startsWith(USER_ID + ".");
+    }
+
+    /**
+     * The token has to survive being rebuilt as a query parameter, and that is
+     * a second reason for {@code withoutPadding()} that lives in a different
+     * package from the decision.
+     *
+     * <p>{@code LocaleSwitch} offers each page in the other language by
+     * rebuilding the current URL with {@code build(true)}, and
+     * {@code UriComponentsBuilder} refuses {@code =} inside a query parameter
+     * value because that is its own delimiter. Padded Base64 would make
+     * {@code /verify-email?token=...} drop its own token the moment somebody
+     * clicked "English" -- and <strong>silently</strong>, because the guard
+     * there degrades to the bare path rather than throwing. A user would land
+     * on the dead-link page with no way to tell why.
+     *
+     * <p>Asserted by performing the rebuild rather than by checking the
+     * alphabet again, so the two decisions are connected by something that
+     * runs.
+     */
+    @Test
+    void issuesATokenThatSurvivesHavingItsUrlRebuilt() {
+        String token = service.issue(USER_ID, TokenPurpose.EMAIL_VERIFICATION);
+
+        String rebuilt = UriComponentsBuilder.fromPath("/verify-email")
+                .query("token=" + token)
+                .replaceQueryParam("lang", "en")
+                .build(true)
+                .toUriString();
+
+        assertThat(rebuilt).contains("token=" + token);
     }
 
     @Test
