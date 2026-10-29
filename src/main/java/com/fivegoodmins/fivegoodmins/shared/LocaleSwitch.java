@@ -139,22 +139,55 @@ class LocaleSwitch {
      * a redisplayed form would carry the submitted password in their href. That
      * is not a tidier version of this method; it is a credential leak.
      *
-     * <p>So the query is passed through as it arrived, and the one case that
-     * cannot be passed through is degraded rather than thrown: the reader keeps
-     * a working language switcher and loses a query string that was already
-     * malformed for the page they are on.
+     * <p>So the query is passed through as it arrived, and what cannot be
+     * passed through is degraded rather than thrown, in three tiers: this URL,
+     * else this path, else a bare {@code ?lang=} that the browser resolves
+     * against whatever it is already showing. The reader always keeps a working
+     * language switcher.
+     *
+     * <p><strong>All three tiers are inside a guard, which took a second
+     * review to get right.</strong> The first version guarded only the query
+     * and then called {@code build(true)} on the path in the fallback -- same
+     * method, same verification, no guard -- so a path like {@code /a%zzb}
+     * made the fallback rethrow precisely the exception the guard had just
+     * caught. Tomcat rejects those paths today, which is the same
+     * container-strictness argument this class refuses to rely on one
+     * paragraph above.
      */
     private static String samePageIn(HttpServletRequest request, String tag) {
+        String path = request.getRequestURI();
         String query = request.getQueryString();
-        if (query != null) {
-            try {
-                return withLanguage(UriComponentsBuilder.fromPath(request.getRequestURI()).query(query), tag);
-            } catch (IllegalArgumentException unrebuildable) {
-                // Deliberately not logged. It is reachable by anyone editing a
-                // URL, so logging it is a log line anybody can write at will.
+
+        // Best: this exact URL, in the other language.
+        try {
+            UriComponentsBuilder here = UriComponentsBuilder.fromPath(path);
+            if (query != null) {
+                here.query(query);
             }
+            return withLanguage(here, tag);
+        } catch (IllegalArgumentException unrebuildable) {
+            // Deliberately not logged, here or below. Both are reachable by
+            // anyone editing a URL, so logging them is a log line anybody can
+            // write at will.
         }
-        return withLanguage(UriComponentsBuilder.fromPath(request.getRequestURI()), tag);
+
+        // The query could not be rebuilt. The path on its own still switches
+        // the language of the page being read.
+        try {
+            return withLanguage(UriComponentsBuilder.fromPath(path), tag);
+        } catch (IllegalArgumentException unrebuildablePath) {
+            // Neither could the path -- {@code /a%zzb} throws the same way the
+            // query does, and the first version of this method called
+            // build(true) on the path OUTSIDE the guard, which made the
+            // fallback rethrow exactly what the guard had just caught.
+            //
+            // A query-only relative reference is the one answer that needs no
+            // encoding of anything: RFC 3986 section 5.3 resolves "?lang=en"
+            // against the current URL, keeping its path and replacing its
+            // query. The tag is "bg" or "en" from LocaleConfig.SUPPORTED, not
+            // from the request, so there is nothing left here to be invalid.
+            return "?" + LocaleConfig.LANGUAGE_PARAMETER + "=" + tag;
+        }
     }
 
     /**

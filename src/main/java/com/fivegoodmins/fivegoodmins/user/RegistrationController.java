@@ -66,6 +66,15 @@ class RegistrationController {
      * there is always an {@code Authentication}, and the one on an anonymous
      * request is an {@code AnonymousAuthenticationToken}. Comparing against
      * null would make every visitor "logged in" and nobody able to register.
+     *
+     * <p><strong>{@code redirect:/} is a 404 today</strong>, because the action
+     * list is page 1 of the frontend brief and is not built. That is a known
+     * cost rather than an oversight: the alternatives are worse. Rendering the
+     * form anyway is the state this exists to prevent; redirecting to
+     * {@code /login} tells someone who is already logged in to log in. A 404
+     * for a signed-in visitor who typed {@code /register} is the least wrong
+     * answer available, and it becomes the right one the day page 1 lands,
+     * with no change here.
      */
     private static final AuthenticationTrustResolver TRUST = new AuthenticationTrustResolverImpl();
 
