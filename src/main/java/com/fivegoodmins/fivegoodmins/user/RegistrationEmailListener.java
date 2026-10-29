@@ -1,5 +1,6 @@
 package com.fivegoodmins.fivegoodmins.user;
 
+import com.fivegoodmins.fivegoodmins.shared.AuthPaths;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailComposer;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailConfig;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailMessage;
@@ -74,22 +75,13 @@ class RegistrationEmailListener {
 
     private static final Logger log = LoggerFactory.getLogger(RegistrationEmailListener.class);
 
-    /**
-     * The path the emailed link lands on, and the login page the
-     * already-registered mail points at.
-     *
-     * <p>Built here because an after-commit listener has no request to derive a
-     * host from, and the host it would derive is Tomcat's rather than the
-     * public one. Both paths are served by controllers that do not exist yet
-     * (frontend brief, pages 7 and 8); until they do, these two constants are
-     * the specification of what they must be called, and
-     * {@code RegistrationEmailListenerTest} is what notices if they change on
-     * one side only.
+    /*
+     * The paths are AuthPaths.VERIFY_EMAIL and AuthPaths.LOGIN, shared with the
+     * controllers that serve them. They are built into absolute URLs here, from
+     * EmailProperties.baseUrl(), because an after-commit listener has no request
+     * to derive a host from -- and the host it could derive would be Tomcat's
+     * rather than the public one.
      */
-    private static final String VERIFY_PATH = "/verify-email";
-    private static final String LOGIN_PATH = "/login";
-
-    private static final String TOKEN_PARAMETER = "token";
 
     private static final EmailTemplate VERIFICATION =
             new EmailTemplate("email/verification", "email.verification.subject");
@@ -180,7 +172,7 @@ class RegistrationEmailListener {
                     existing.locale(),
                     EXISTING_ACCOUNT,
                     Map.of("displayName", existing.displayName(),
-                            "loginUrl", url(LOGIN_PATH)));
+                            "loginUrl", url(AuthPaths.LOGIN)));
         };
     }
 
@@ -193,8 +185,8 @@ class RegistrationEmailListener {
      */
     private String verificationUrl(String token) {
         return UriComponentsBuilder.fromUriString(properties.baseUrl())
-                .path(VERIFY_PATH)
-                .queryParam(TOKEN_PARAMETER, token)
+                .path(AuthPaths.VERIFY_EMAIL)
+                .queryParam(AuthPaths.TOKEN_PARAMETER, token)
                 .build()
                 .encode()
                 .toUriString();

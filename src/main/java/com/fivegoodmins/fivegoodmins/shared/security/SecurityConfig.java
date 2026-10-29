@@ -1,10 +1,10 @@
 package com.fivegoodmins.fivegoodmins.shared.security;
 
+import com.fivegoodmins.fivegoodmins.shared.AuthPaths;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
@@ -50,6 +50,24 @@ class SecurityConfig {
                         // an anonymous visitor to the login form.
                         .requestMatchers("/error").permitAll()
 
+                        // The anonymous half of ADR-002's registration flow,
+                        // named one by one. /verify-email is the path in every
+                        // verification email already in a mailbox, and
+                        // /register/check-email is the GET half of the form's
+                        // POST -- leaving either out would redirect a reader to
+                        // the login form they do not yet have an account for,
+                        // and the second would take the flash attribute with it.
+                        .requestMatchers(
+                                AuthPaths.REGISTER,
+                                AuthPaths.CHECK_EMAIL,
+                                AuthPaths.VERIFY_EMAIL,
+                                // The consent checkbox on /register links here,
+                                // so it has to be readable before anybody has
+                                // an account -- a privacy policy behind a login
+                                // is not one you can consent to.
+                                AuthPaths.PRIVACY)
+                        .permitAll()
+
                         // Default deny. Most of this site will end up public --
                         // it is a directory people are meant to browse without
                         // an account -- but the public paths get named one by
@@ -58,13 +76,11 @@ class SecurityConfig {
                         // rather than data.
                         .anyRequest().authenticated())
 
-                // Spring Security's generated login page for now; loginPage(),
-                // the Bulgarian labels and the uniformly vague failure message
-                // arrive with the first template. formLogin is not one of the
-                // configurers HttpSecurity applies by default, so without this
-                // line there is no way to authenticate at all. logout, csrf,
-                // headers, sessionManagement and exceptionHandling *are*
-                // applied by default, which is why they are absent here:
+                // formLogin is not one of the configurers HttpSecurity
+                // applies by default, so without this line there is no way to
+                // authenticate at all. logout, csrf, headers,
+                // sessionManagement and exceptionHandling *are* applied by
+                // default, which is why they are absent here:
                 //
                 //   * CSRF protection is on. It will 403 htmx POSTs until the
                 //     token is wired into hx-headers (ADR-002); that is a
@@ -84,7 +100,18 @@ class SecurityConfig {
                 // and report the request as secure -- not a headers() block
                 // here, because overriding the condition would make the header
                 // a lie on any request that really is plain HTTP.
-                .formLogin(Customizer.withDefaults());
+                //
+                // loginPage() names LoginController's template rather than
+                // Spring Security's generated one. Two consequences follow and
+                // neither is automatic: DefaultLoginPageGeneratingFilter stops
+                // answering, so the path has to be permitted explicitly -- it
+                // is, by permitAll() below, which also covers the POST the form
+                // makes to it -- and the failure redirect becomes
+                // /login?error, which is the parameter LoginController renders
+                // one deliberately vague message for.
+                .formLogin(form -> form
+                        .loginPage(AuthPaths.LOGIN)
+                        .permitAll());
 
         return http.build();
     }

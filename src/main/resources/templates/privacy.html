@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!--/*
+  Page 5 of the frontend brief: the privacy policy. STRUCTURAL PLACEHOLDER --
+  unstyled, and the brief says this shares a template with About (page 4).
+
+  The copy here is a truthful stub, not a design or a legal document. It says
+  what registration stores, because that is readable off the schema, and it
+  says that the full text is still being written. Replacing the text is the
+  site owner's job; replacing the markup is the frontend contributor's.
+*/-->
+<html th:replace="~{layout :: page(#{privacy.title}, ~{::main})}"
+      xmlns:th="http://www.thymeleaf.org">
+<body>
+<main>
+
+    <h1 th:text="#{privacy.heading}">Privacy policy</h1>
+
+    <p role="note" th:text="#{privacy.draftNotice}">The full text is being prepared.</p>
+
+    <h2 th:text="#{privacy.data.heading}">What we store</h2>
+    <p th:text="#{privacy.data.body}">Your email address, display name and a hash of your password.</p>
+
+    <h2 th:text="#{privacy.rights.heading}">Your rights</h2>
+    <p th:text="#{privacy.rights.body}">You can delete your account at any time.</p>
+
+</main>
+</body>
+</html>

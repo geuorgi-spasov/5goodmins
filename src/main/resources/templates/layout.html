@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<!--/*
+  STRUCTURAL PLACEHOLDER, NOT A DESIGN.
+
+  The frontend brief is addressed to a frontend contributor, and the design is
+  theirs: section 7 names turquoise as the brand colour and leaves the rest
+  open, section 1 requires self-hosted fonts with checked Cyrillic coverage,
+  and section 5 lists the fragments worth building once. None of that is here
+  and none of it should be decided by the backend.
+
+  What is here is only what the web layer cannot work without: the page
+  skeleton, the CSRF meta tags, and the language switcher's links. There is no
+  stylesheet, no class attribute and no layout. Replace all of this freely --
+  what must survive is listed in each page's own comment.
+
+  Used as a parameterised fragment rather than through the layout dialect,
+  which is not a dependency: a page declares
+  <html th:replace="~{layout :: page(#{some.title}, ~{::main})}"> and passes
+  its own <main> in.
+*/-->
+<html th:fragment="page(pageTitle, content)"
+      lang="bg" th:lang="${#locale.language}"
+      xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!--/*
+      The CSRF token, for htmx (frontend brief, section 1). Plain forms need
+      none of this -- Thymeleaf's Spring dialect puts a hidden input in any
+      th:action form by itself -- so these two lines exist for the fetch-style
+      requests htmx makes, and the first page that loads htmx reads them.
+
+      The safe-navigation operator matters: csrf() can be disabled per path and
+      the attribute is then absent, which without ?. is an exception on every
+      page rather than a missing meta tag.
+    */-->
+    <meta name="_csrf" th:content="${_csrf?.token}">
+    <meta name="_csrf_header" th:content="${_csrf?.headerName}">
+
+    <title th:text="${pageTitle} + ' - ' + #{app.name}">5 Good Minutes</title>
+</head>
+<body>
+
+<header>
+    <!--/*
+      Home does not exist yet (frontend brief, page 1). Until it does, an
+      anonymous visitor following this is redirected to the login form by
+      anyRequest().authenticated().
+    */-->
+    <a th:href="@{/}" th:text="#{app.name}">5 Good Minutes</a>
+
+    <!--/*
+      The language switcher. The links come from LocaleSwitch rather than from
+      an expression here, because Thymeleaf 3.1 removed #request -- see that
+      class for why they are paths built server-side rather than a redirect
+      back to Referer.
+
+      The language being read is text, not a link: a link to the page you are
+      already on does nothing, and aria-current is what tells a screen reader
+      which of the two is active.
+    */-->
+    <nav th:attr="aria-label=#{language.label}">
+        <ul>
+            <li th:each="language : ${languageLinks}">
+                <span th:if="${language.current}"
+                      aria-current="page"
+                      th:text="#{'language.' + ${language.tag}}">Български</span>
+                <a th:unless="${language.current}"
+                   th:href="${language.url}"
+                   th:attr="hreflang=${language.tag}"
+                   th:text="#{'language.' + ${language.tag}}">English</a>
+            </li>
+        </ul>
+    </nav>
+</header>
+
+<main th:replace="${content}">
+    <p>The page's own content replaces this.</p>
+</main>
+
+</body>
+</html>

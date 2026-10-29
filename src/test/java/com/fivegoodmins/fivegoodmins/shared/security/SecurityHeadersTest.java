@@ -7,12 +7,16 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Optional;
 
+import static java.util.stream.Collectors.toSet;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -73,13 +77,15 @@ class SecurityHeadersTest {
 
     @Test
     void servesTheLoginPageItRedirectsTo() throws Exception {
-        // anyRequest().authenticated() covers /login too, so the only reason
-        // the redirect above is not a loop is that
-        // DefaultLoginPageGeneratingFilter sits ahead of the authorization
-        // filter and completes the response itself. Worth asserting rather
-        // than reasoning about: the day loginPage() names a controller-backed
-        // template, that filter stops answering and the rule has to permit the
-        // path explicitly.
+        // anyRequest().authenticated() covers /login too, so the reason the
+        // redirect above is not a loop is that the path is permitted
+        // explicitly. It used to be that DefaultLoginPageGeneratingFilter sat
+        // ahead of the authorization filter and answered on its own; that
+        // filter stopped answering the moment loginPage() named
+        // LoginController's template, which is exactly the day this assertion
+        // was written for. What it checks now is that something still serves
+        // the path the redirect points at -- see LoginWebTest for the page
+        // itself.
         HttpResponse<String> response = get("/login");
 
         assertThat(response.statusCode()).isEqualTo(200);
@@ -93,8 +99,40 @@ class SecurityHeadersTest {
         // tests before writing the header.
         HttpResponse<String> response = get("/", "X-Forwarded-Proto", "https");
 
-        assertThat(header(response, "Strict-Transport-Security"))
-                .hasValueSatisfying(hsts -> assertThat(hsts).contains("max-age=31536000"));
+        // Asserted whole rather than by substring, because the policy is the
+        // value and not just its presence. Spring Security's default is a year
+        // with includeSubDomains and without preload, and all three are
+        // deliberate (ADR-002):
+        //
+        //   * includeSubDomains stays. Without it, an active attacker can
+        //     serve http://anything.5goodmins.com and set a cookie scoped to
+        //     .5goodmins.com, which the apex then receives -- the session
+        //     cookie being Secure stops it leaking, not an attacker planting
+        //     one. HSTS on the apex alone does not close that; this does.
+        //   * preload is not added. It is the one-way door: submission bakes
+        //     the domain into browser binaries, removal takes months of
+        //     release trains, and from then on every subdomain of
+        //     5goodmins.com must be HTTPS or be unreachable. A year of
+        //     max-age already buys the protection that matters.
+        //   * A year, because a shorter max-age is a shorter window in which
+        //     the protection actually holds, and the only cost is the cost of
+        //     the commitment above.
+        //
+        // The DIRECTIVE SET, not the header string. Spring Security writes
+        // "max-age=31536000 ; includeSubDomains" with a space before the
+        // semicolon, and that space is a quirk of how HstsHeaderWriter
+        // concatenates rather than part of the policy. Asserting the raw string
+        // means a red build the day somebody tidies the formatting -- and a red
+        // build for a non-change is exactly what teaches people to loosen an
+        // assertion back to contains("max-age").
+        //
+        // Split and compared as a set, this still fails for every change that
+        // IS the decision: max-age moving off a year, includeSubDomains
+        // disappearing, preload appearing, or a directive nobody chose showing
+        // up.
+        assertThat(header(response, "Strict-Transport-Security")).hasValueSatisfying(hsts ->
+                assertThat(Arrays.stream(hsts.split(";")).map(String::trim).collect(toSet()))
+                        .containsExactlyInAnyOrder("max-age=31536000", "includeSubDomains"));
     }
 
     @Test
@@ -116,6 +154,47 @@ class SecurityHeadersTest {
                 .contains("Secure")
                 .contains("SameSite=Lax")
                 .contains("HttpOnly"));
+    }
+
+    /** A request line written by hand, because every HTTP client sanitises what is under test. */
+    private String statusLineFor(String query) throws IOException {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.getOutputStream().write(("GET /register?" + query + " HTTP/1.1\r\n"
+                    + "Host: localhost\r\n"
+                    + "Connection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+            socket.getOutputStream().flush();
+            return new String(socket.getInputStream().readAllBytes(), StandardCharsets.ISO_8859_1)
+                    .lines().findFirst().orElse("");
+        }
+    }
+
+    /**
+     * Which malformed query strings reach the application at all -- the
+     * question behind the guard in {@code LocaleSwitch}, answered rather than
+     * assumed.
+     *
+     * <p>A raw socket, because everything in the way cleans this up:
+     * {@code URI.create} throws on a stray {@code %}, {@code HttpClient} will
+     * not take a URI it cannot parse, and MockMvc's request builder normalises
+     * the query before the request exists. Writing the request line by hand is
+     * the only way to ask Tomcat what it does.
+     *
+     * <p>The answer corrected an assumption rather than confirming one. The
+     * obvious trigger -- a bad percent sequence -- never arrives, because
+     * Tomcat 11 rejects it itself. What sails through is an ordinary
+     * {@code =} inside a value, which RFC 3986 allows in a query and which
+     * {@code UriComponentsBuilder} then refuses as {@code QUERY_PARAM}. That
+     * is base64 padding, a nested URL, a JWT.
+     */
+    @Test
+    void rejectsAMalformedPercentSequenceItselfButPassesAnEqualsSignThrough() throws Exception {
+        // Tomcat's own 400. Also its answer to a raw space, |, {, ^, \, " and <.
+        assertThat(statusLineFor("x=100%")).startsWith("HTTP/1.1 400");
+
+        // And the one that does reach a controller. 500 here is the regression
+        // the LocaleSwitch guard exists to prevent.
+        assertThat(statusLineFor("t=abc==")).startsWith("HTTP/1.1 200");
+        assertThat(statusLineFor("next=http://x/?a=b")).startsWith("HTTP/1.1 200");
     }
 
     @Test

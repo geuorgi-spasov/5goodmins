@@ -32,7 +32,9 @@ server:
   # Still unverified on the live site, and it is one curl to verify -- against
   # the *.up.railway.app domain, not 5goodmins.com, because Cloudflare can be
   # configured to add Strict-Transport-Security itself and would mask the
-  # answer. If HSTS is missing there, the fix is
+  # answer. Measured 2026-10-28: it is not adding it -- Cloudflare's own 502
+  # error page, which it generates end to end, carries no HSTS -- so whatever
+  # the origin emits is what a browser gets. If HSTS is missing there, the fix is
   # server.tomcat.remoteip.internal-proxies scoped to the address that shows up
   # in the access log, never `.*` and never a switch to `framework` -- and note
   # that setting that property REPLACES the default list above rather than

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<!--/*
+  Page 8 of the frontend brief, result states: where the emailed link lands.
+  STRUCTURAL PLACEHOLDER -- unstyled on purpose.
+
+  WHAT MUST SURVIVE A REDESIGN:
+
+   * Three states, and none of them offers to resend (ADR-002 cut the resend
+     form).
+   * "Already confirmed" is as warm as "confirmed" rather than an error. A
+     second click, or a mail client prefetching the link, is ordinary.
+   * The dead-link state reuses verification.notice.resend and .resendLink,
+     because the recovery from a link that died is the same recovery as from
+     one that never arrived.
+   * th:case="*" stays the dead-link branch rather than being replaced by an
+     explicit 'DEAD_LINK'. A state added to the enum without a branch here
+     would otherwise render an empty page, and "that link is no longer valid"
+     is the safe thing to say about a link this page does not understand.
+
+  The controller passes the state's name rather than the enum: th:case
+  compares what it evaluates by equality, and an enum constant is never equal
+  to a string literal a template can write.
+*/-->
+<html th:replace="~{layout :: page(#{verification.result.title}, ~{::main})}"
+      xmlns:th="http://www.thymeleaf.org">
+<body>
+<main th:switch="${state}">
+
+    <div th:case="'CONFIRMED'">
+        <h1 th:text="#{verification.result.confirmed.heading}">Address confirmed</h1>
+        <p th:text="#{verification.result.confirmed.body}">You can log in now.</p>
+        <p><a th:href="@{/login}" th:text="#{verification.result.loginLink}">Log in</a></p>
+    </div>
+
+    <div th:case="'ALREADY_CONFIRMED'">
+        <h1 th:text="#{verification.result.alreadyConfirmed.heading}">Already confirmed</h1>
+        <p th:text="#{verification.result.alreadyConfirmed.body}">Nothing further is needed.</p>
+        <p><a th:href="@{/login}" th:text="#{verification.result.loginLink}">Log in</a></p>
+    </div>
+
+    <div th:case="*">
+        <h1 th:text="#{verification.result.deadLink.heading}">That link is no longer valid</h1>
+        <p>
+            <span th:text="#{verification.notice.resend}">Register again with the same address.</span>
+            <a th:href="@{/register}" th:text="#{verification.notice.resendLink}">Register again</a>
+        </p>
+    </div>
+
+</main>
+</body>
+</html>
