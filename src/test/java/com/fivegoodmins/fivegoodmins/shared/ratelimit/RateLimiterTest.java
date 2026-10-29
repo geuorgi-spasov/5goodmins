@@ -233,21 +233,55 @@ class RateLimiterTest {
     }
 
     /**
-     * The incident switch lives in {@code tryConsume}, so every caller is
-     * covered by it and none can forget to ask. Asserted on both kinds of
-     * caller, because the first version checked it in the filter and the
-     * send-side cap would have stayed on.
+     * The incident switch is not this class's business any more, and the
+     * regression test for that is here: {@code refuse-requests = false} must
+     * leave the mail cap exactly where it was. The switch is read by
+     * {@code RateLimitFilter}, which is the only thing that refuses a request.
      */
     @Test
-    void allowsEverythingWhenSwitchedOff() {
-        RateLimiter off = new RateLimiter(
-                new RateLimitProperties(false, 1, WINDOW, 1, Duration.ofHours(1),
-                        1, Duration.ofHours(24), 20_000),
+    void keepsTheMailCapWhenRequestRefusalIsSwitchedOff() {
+        RateLimiter withRefusalOff = new RateLimiter(
+                new RateLimitProperties(false, 20, WINDOW, 10, Duration.ofHours(1),
+                        3, Duration.ofHours(24), 20_000),
                 clock);
 
-        for (int attempt = 1; attempt <= 50; attempt++) {
-            assertThat(off.tryConsume(RateLimitScope.LOGIN_ATTEMPTS, KEY).allowed()).isTrue();
-            assertThat(off.allowRegistrationEmail("ivan@example.invalid")).isTrue();
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            assertThat(withRefusalOff.allowRegistrationEmail("ivan@example.invalid")).isTrue();
         }
+
+        assertThat(withRefusalOff.allowRegistrationEmail("ivan@example.invalid"))
+                .as("the mail cap has no switch, so this one must still refuse")
+                .isFalse();
+    }
+
+    @Test
+    void putsARefundedTokenBack() {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            limiter.allowRegistrationEmail("ivan@example.invalid");
+        }
+        assertThat(limiter.allowRegistrationEmail("ivan@example.invalid")).isFalse();
+
+        limiter.refundRegistrationEmail("ivan@example.invalid");
+
+        assertThat(limiter.allowRegistrationEmail("ivan@example.invalid")).isTrue();
+        assertThat(limiter.allowRegistrationEmail("ivan@example.invalid")).isFalse();
+    }
+
+    /**
+     * A refund cannot mint allowance. {@code addTokens} saturates at the
+     * bucket's capacity, so refunding a full bucket — which a retry storm
+     * against a recovered provider could do — leaves it full rather than
+     * over-full.
+     */
+    @Test
+    void neverRefundsPastTheCapacity() {
+        for (int refund = 0; refund < 10; refund++) {
+            limiter.refundRegistrationEmail("ivan@example.invalid");
+        }
+
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            assertThat(limiter.allowRegistrationEmail("ivan@example.invalid")).isTrue();
+        }
+        assertThat(limiter.allowRegistrationEmail("ivan@example.invalid")).isFalse();
     }
 }

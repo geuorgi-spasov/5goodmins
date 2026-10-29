@@ -122,7 +122,7 @@ in somebody's inbox rather than at startup.
 | `APP_MAIL_BASE_URL` | Public origin used to build the links emails carry | yes |
 | `APP_MAIL_FROM_NAME` | Display name shown instead of the address | no |
 | `APP_MAIL_BREVO_API_KEY` | Brevo transactional API key; absent means no mail is sent | no |
-| `APP_RATE_LIMIT_ENABLED` | `false` switches the rate limiter off during an incident | no |
+| `APP_RATE_LIMIT_REFUSE_REQUESTS` | `false` stops the limiter refusing requests, during an incident | no |
 | `SPRING_PROFILES_ACTIVE` | `dev` locally; unset in the container | no |
 
 Rotating `APP_TOKEN_SECRET` invalidates every verification and unsubscribe link
@@ -161,6 +161,17 @@ and the request still gets the ordinary "check your inbox" page. The general
 rule: a bucket that can refuse a request is only ever keyed on something the
 requester cannot choose on somebody else's behalf.
 
+Two consequences of that, both load-bearing:
+
+- **`APP_RATE_LIMIT_REFUSE_REQUESTS=false` does not disarm the mail cap.** It
+  cannot: the flag exists to recover from the limiter refusing real users, and
+  that is the exact moment you must not also uncap outbound mail. The cap has
+  no switch — change the number if you need it looser.
+- **A spent token is refunded if the send fails.** The cap counts mail that
+  reached an inbox, not attempts to hand it to a provider, so a provider outage
+  does not leave an address capped having received nothing. Same rule as the
+  digest watermark, which only moves after a successful send.
+
 IPv6 clients are keyed on the `/64` prefix, because a `/128` would give one
 household 2^64 buckets. Buckets live in memory, so **every deploy resets
 them** — accepted for one instance, and the thing to fix alongside the
@@ -173,8 +184,38 @@ inherit the real error page when that is built.
 `RemoteIpValve` resolving past Cloudflare's edge to the real client. If it ever
 stops short, every request shares one bucket and the site gets 20 login
 attempts per 15 minutes in total. The refusal log line prints the resolved key,
-so a Cloudflare edge address there is the diagnosis; `APP_RATE_LIMIT_ENABLED=false`
-is the stopgap while the proxy configuration is fixed.
+so a Cloudflare edge address there is the diagnosis;
+`APP_RATE_LIMIT_REFUSE_REQUESTS=false` is the stopgap while the proxy
+configuration is fixed.
+
+### Taking the key-resolution reading
+
+**This has not been done yet, and it should be, before trusting the limiter in
+production.** Nothing else in the application reports what `RemoteIpValve`
+resolved, so the refusal log line is the instrument. From a machine whose
+public IP you know:
+
+```bash
+for i in $(seq 1 21); do curl -s -o /dev/null -X POST https://5goodmins.com/login -d 'username=a&password=b'; done
+```
+
+Then read the application log. The 21st request produces:
+
+```
+WARN  RateLimitFilter : rate limit refused LOGIN_ATTEMPTS: bucket key [X], remote address [Y], ...
+```
+
+Three possible readings. `X` is **your own public address** — correct, the valve
+resolved through both hops, nothing to do. `X` is a **Cloudflare address**
+(`104.16.0.0/13` and the rest of the list in `application.yaml`) — the walk
+stopped at the edge, so every visitor shares one bucket; fix `trusted-proxies`.
+`X` is a **private address** — the valve is not reading `X-Forwarded-For` at
+all; check `forward-headers-strategy`.
+
+Repeat against the `*.up.railway.app` origin to learn whether Railway's proxy
+appends to `X-Forwarded-For` or passes it through — if a forged header reaches
+`getRemoteAddr()` there, the fix is at the edge (restrict the origin to
+Cloudflare), not in the application.
 
 ---
 

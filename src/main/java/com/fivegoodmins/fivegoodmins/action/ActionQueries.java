@@ -41,11 +41,16 @@ public class ActionQueries {
     /**
      * The newest actions a visitor could act on right now.
      *
+     * <p>The excerpt length is applied here, from
+     * {@link ActionSummary#EXCERPT_CHARS}, and passed to the query as a bound
+     * parameter — so the number lives in one place and this is the only code
+     * that applies it.
+     *
      * @param now   passed in, never read from a clock here (ADR-019).
      * @param limit a cap, not a page. Callers that need paging need a different
      *              method, because an offset and a total are a different query.
      */
     public List<ActionSummary> newestActive(Instant now, int limit) {
-        return actions.findNewestActive(now, Limit.of(limit));
+        return actions.findNewestActive(now, ActionSummary.EXCERPT_CHARS, Limit.of(limit));
     }
 }

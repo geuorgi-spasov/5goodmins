@@ -54,20 +54,26 @@ public interface ActionRepository extends JpaRepository<Action, Long> {
      * <p>{@code Limit} rather than {@code Pageable}: there is no page, no offset
      * and no total to pay for. Five is a cap, not a window.
      *
-     * <p><strong>The description is cut to 200 characters in SQL</strong>, which
-     * is {@link ActionSummary#EXCERPT_CHARS} written again as a literal because
-     * JPQL cannot read a constant — change both together. Reading a 5,000
-     * character column in order to display 140 of it is affordable once per
-     * account verification and not once per subscriber per day, which is the
-     * shape the digest will reuse.
+     * <p><strong>The description is cut to an excerpt in SQL</strong>, and the
+     * length is a bound parameter rather than a literal, so
+     * {@link ActionSummary#EXCERPT_CHARS} exists in exactly one place.
+     * {@code ActionQueries} supplies it. An earlier version wrote the number
+     * twice and defended the duplication as unavoidable because "JPQL cannot
+     * read a constant" — it does not have to, and documenting a duplication you
+     * had a choice about is a worse answer than either removing it or owning
+     * it. Reading a 5,000 character column in order to display 140 of it is
+     * affordable once per account verification and not once per subscriber per
+     * day, which is the shape the digest will reuse.
      */
     @Query("""
             select new com.fivegoodmins.fivegoodmins.action.ActionSummary(
-                       a.id, a.title, a.actionType, substring(a.description, 1, 200))
+                       a.id, a.title, a.actionType, substring(a.description, 1, :excerptChars))
             from Action a
             where a.status = com.fivegoodmins.fivegoodmins.action.ActionStatus.PUBLISHED
               and a.endsAt > :now
             order by a.publishedAt desc, a.id desc
             """)
-    List<ActionSummary> findNewestActive(@Param("now") Instant now, Limit limit);
+    List<ActionSummary> findNewestActive(@Param("now") Instant now,
+                                         @Param("excerptChars") int excerptChars,
+                                         Limit limit);
 }

@@ -29,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * ADR-002's rate limiting, through the filter chain it actually sits in.
  *
  * <p><strong>Its own context, with numbers of its own.</strong> The suite runs
- * with {@code app.rate-limit.enabled=false} -- see
+ * with {@code app.rate-limit.refuse-requests=false} -- see
  * {@code src/test/resources/application.properties} for why -- so this class
  * turns it back on, and uses small limits so that a test is four requests
  * rather than twenty-one.
@@ -44,7 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * rebuilt five times to avoid writing five different addresses.
  */
 @SpringBootTest(properties = {
-        "app.rate-limit.enabled=true",
+        "app.rate-limit.refuse-requests=true",
         "app.rate-limit.login-attempts=3",
         "app.rate-limit.registrations-per-address=4",
         // Deliberately the tightest number in the file, so that

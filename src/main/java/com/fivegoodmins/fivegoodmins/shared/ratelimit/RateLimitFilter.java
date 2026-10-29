@@ -91,6 +91,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
             PathPatternRequestMatcher.pathPattern(HttpMethod.POST, AuthPaths.REGISTER);
 
     private final RateLimiter limiter;
+    private final boolean refuseRequests;
 
     /**
      * Constructed by {@code SecurityConfig} rather than declared as a bean, and
@@ -101,13 +102,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
      * first registration off. No bean, no dance, and the filter's position is
      * declared in the one file that declares every other filter's position.
      */
-    public RateLimitFilter(RateLimiter limiter) {
+    public RateLimitFilter(RateLimiter limiter, boolean refuseRequests) {
         this.limiter = limiter;
+        this.refuseRequests = refuseRequests;
     }
 
+    /**
+     * {@code app.rate-limit.refuse-requests} is read here and nowhere else,
+     * which is the point of its name: it switches off the buckets that can
+     * refuse a request, and this filter is the only thing that refuses one. The
+     * per-recipient mail cap is deliberately out of its reach -- see
+     * {@link RateLimitProperties}.
+     */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !(LOGIN.matches(request) || REGISTER.matches(request));
+        return !refuseRequests || !(LOGIN.matches(request) || REGISTER.matches(request));
     }
 
     @Override

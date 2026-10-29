@@ -3,6 +3,7 @@ package com.fivegoodmins.fivegoodmins.shared.security;
 import com.fivegoodmins.fivegoodmins.action.ActionPaths;
 import com.fivegoodmins.fivegoodmins.shared.AuthPaths;
 import com.fivegoodmins.fivegoodmins.shared.ratelimit.RateLimitFilter;
+import com.fivegoodmins.fivegoodmins.shared.ratelimit.RateLimitProperties;
 import com.fivegoodmins.fivegoodmins.shared.ratelimit.RateLimiter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -36,15 +37,17 @@ import org.springframework.security.web.csrf.CsrfFilter;
 class SecurityConfig {
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, RateLimiter rateLimiter)
-            throws Exception {
+    SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                            RateLimiter rateLimiter,
+                                            RateLimitProperties rateLimits) throws Exception {
         http
                 // ADR-002's rate limiting, on POST /login and POST /register.
                 // Before CsrfFilter, so a spray with no token is refused before
                 // it costs a session lookup; see RateLimitFilter for the cost
                 // of that ordering and for why this is constructed here rather
                 // than injected as a bean.
-                .addFilterBefore(new RateLimitFilter(rateLimiter), CsrfFilter.class)
+                .addFilterBefore(new RateLimitFilter(rateLimiter, rateLimits.refuseRequests()),
+                        CsrfFilter.class)
 
                 .authorizeHttpRequests(authorize -> authorize
                         // Static assets. Listed explicitly rather than through

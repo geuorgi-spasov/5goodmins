@@ -1127,6 +1127,50 @@ version needed is gone. And the welcome email is exempt from the cap, because
 it cannot be used as a cannon: reaching it requires a valid signed token for
 that account, which only the mailbox's reader has.
 
+### Q: Did you get the rest of that right first time? **[DEEP]**
+
+No, and the follow-up findings are more interesting than the original, because
+all three are the same mistake: I corrected the happy path and not the things
+arranged around it.
+
+**The kill switch still disarmed the mail cap.** It was called `enabled` and
+turned off all three buckets. But the switch's whole purpose is recovering from
+the limiter refusing real users, and only the two address-keyed buckets can do
+that — the mail cap is keyed on the recipient and cannot misfire against a
+client. So the one situation the flag exists for was also the situation in
+which flipping it turned `/register` back into a mail cannon, with the
+per-address bucket going off at the same instant so nothing was left bounding
+it. It is now `refuse-requests`, named for what it does, read only by the
+filter; the mail cap has no switch at all, and loosening it means changing the
+number. There is a test over the properties record's component list, so adding
+a flag that disarms the cap means changing that test first.
+
+**And I spent the token before the send instead of after it.** A provider
+outage plus three retries by a user who can see no email left that address
+capped for twenty-four hours having received nothing — the limiter punishing
+the person it exists to protect. The cap counts mail that reached an inbox, not
+attempts to hand it to a provider.
+
+That second one is worth naming as a pattern, because this codebase already
+contains the same idea somewhere I *did* get right: ADR-005's digest watermark
+"moves only after a successful send". **A side effect that bounds a resource
+commits on success, never on attempt.** Two instances, one rule, and I only
+spotted it in the second place after someone pointed at the first.
+
+The implementation detail is a small decision too: consume up front and refund
+on failure, rather than peek then consume. The mail pool is one thread today,
+so peeking is exact — but ADR-005 says both pool numbers move together if the
+digest ever needs concurrency, and on that day a peek becomes a race that
+over-sends while a consume stays atomic. The refund mirrors the welcome-email
+exemption, or a failed welcome would mint a free token.
+
+**One process point I would volunteer here.** The first version of the refund
+test passed with the refund deleted from the code — it built a fresh limiter
+per listener, so each got a fresh bucket store and the assertion proved nothing.
+I now check a regression test by mutating the thing it covers and confirming
+that test, and only that test, goes red. A regression test nobody has watched
+fail is a comment with an assertion in it.
+
 ### Q: How do you key the buckets? **[DEEP]**
 
 `request.getRemoteAddr()`, after Tomcat's `RemoteIpValve` has walked
@@ -1187,6 +1231,11 @@ A small trap worth knowing if you ever add Bucket4j: `bucket4j-core` looks like
 the artifact and is a dead line that stops at 8.10.1. From 8.11 the artifacts
 are split by target JDK, so on Java 21 it is `bucket4j_jdk17-core`. I pinned
 the dead one at what looked like its newest release and a reviewer caught it.
+
+The `enabled` flag that used to sit in front of all three scopes is gone from
+this class for a reason worth repeating: a kill switch has to respect the
+distinction the scopes make. Two of them refuse a request and one refuses a
+send, and only the first kind can ever need killing.
 
 One more failure mode, and I had the sign wrong on it at first. If the valve
 ever stops short of the real client — a stale Cloudflare range, a change at the

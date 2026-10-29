@@ -3,6 +3,7 @@ package com.fivegoodmins.fivegoodmins.user;
 import com.fivegoodmins.fivegoodmins.action.ActionSummary;
 import com.fivegoodmins.fivegoodmins.action.ActionType;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailComposer;
+import com.fivegoodmins.fivegoodmins.shared.email.EmailDeliveryException;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailMessage;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailProperties;
 import com.fivegoodmins.fivegoodmins.shared.email.EmailSender;
@@ -65,20 +66,7 @@ class RegistrationEmailLimitTest {
                 .thenAnswer(call -> new EmailMessage(
                         call.getArgument(0), "subject", "<p>html</p>", "text"));
 
-        RateLimitProperties limits = new RateLimitProperties(
-                true,
-                20, Duration.ofMinutes(15),
-                10, Duration.ofHours(1),
-                CAP, Duration.ofHours(24),
-                20_000);
-
-        listener = new RegistrationEmailListener(
-                composer,
-                sender,
-                new EmailProperties("no-reply@test.invalid", null, "https://test.invalid",
-                        new EmailProperties.Brevo(null, Duration.ofSeconds(5), Duration.ofSeconds(10))),
-                inlineExecutor(),
-                new RateLimiter(limits, clock));
+        listener = listenerWith(limits(), sender);
     }
 
     @Test
@@ -186,27 +174,127 @@ class RegistrationEmailLimitTest {
         assertThat(sender.sent()).hasSize(1);
     }
 
+    /**
+     * The incident switch must not reach this cap, and this is the regression
+     * test for a version in which it did.
+     *
+     * <p>{@code refuse-requests} exists to recover from the limiter refusing
+     * real users, which only the two address-keyed buckets can do. This one is
+     * keyed on the recipient and cannot misfire against a client — so the one
+     * situation the switch exists for was also the situation in which flipping
+     * it turned {@code /register} back into a mail cannon, with the per-address
+     * bucket going off at the same moment and nothing left bounding it.
+     */
     @Test
-    void sendsEverythingWhenTheLimiterIsSwitchedOff() {
-        RateLimitProperties off = new RateLimitProperties(
-                false,
+    void keepsCappingMailWhenRequestRefusalIsSwitchedOff() {
+        RegistrationEmailListener withRefusalOff = listenerWith(
+                new RateLimitProperties(false, 20, Duration.ofMinutes(15),
+                        10, Duration.ofHours(1), CAP, Duration.ofHours(24), 20_000),
+                sender);
+
+        for (int attempt = 0; attempt <= CAP; attempt++) {
+            withRefusalOff.onRegistrationEmail(verification());
+        }
+
+        assertThat(sender.sent())
+                .as("the mail cap has no switch, so it must still bite")
+                .hasSize(CAP);
+    }
+
+    /**
+     * The cap counts mail that reached an inbox, not attempts to hand it to a
+     * provider.
+     *
+     * <p>Without the refund, a Brevo outage plus three retries by a user who
+     * can see no email leaves that address capped for twenty-four hours having
+     * received nothing — the limiter punishing the person it exists to protect.
+     * Same rule as ADR-005's digest watermark, which moves only after a
+     * successful send, and the general form is worth naming: a side effect that
+     * bounds a resource commits on success, never on attempt.
+     */
+    @Test
+    void doesNotSpendTheAllowanceOnASendThatFailed() {
+        // ONE limiter behind both listeners. Two limiters would be two bucket
+        // stores, and this test would pass with no refund in the code at all --
+        // which is exactly what the first version of it did.
+        RateLimiter limiter = new RateLimiter(limits(), clock);
+        FailingSender failing = new FailingSender();
+        RegistrationEmailListener overABrokenTransport = listener(failing, limiter);
+
+        for (int attempt = 1; attempt <= CAP; attempt++) {
+            overABrokenTransport.onRegistrationEmail(verification());
+        }
+        assertThat(failing.attempts()).as("every one was tried").isEqualTo(CAP);
+
+        // The provider comes back. The address has received nothing, so its
+        // whole allowance must still be there.
+        RegistrationEmailListener recovered = listener(sender, limiter);
+        for (int attempt = 1; attempt <= CAP; attempt++) {
+            recovered.onRegistrationEmail(verification());
+        }
+        recovered.onRegistrationEmail(verification());
+
+        assertThat(sender.sent())
+                .as("the whole allowance survived the outage, and the cap still bites after it")
+                .hasSize(CAP);
+    }
+
+    /**
+     * The exemption has to be mirrored on the refund path too: refunding an
+     * event that was never charged would hand the recipient a free token every
+     * time a welcome email failed to send.
+     */
+    @Test
+    void doesNotRefundAWelcomeEmailItNeverCharged() {
+        RateLimiter limiter = new RateLimiter(limits(), clock);
+
+        // Spend most of the allowance on mail that really went out, so that a
+        // wrongly refunded welcome has somewhere to show up. Without this the
+        // bucket would already be full, addTokens would saturate, and the test
+        // would pass whether the exemption was mirrored or not.
+        RegistrationEmailListener working = listener(sender, limiter);
+        working.onRegistrationEmail(verification());
+        working.onRegistrationEmail(verification());
+
+        // Now fail a pile of welcome sends. None of them was charged, so none
+        // may be refunded -- the one remaining verification token must still be
+        // one, not three.
+        RegistrationEmailListener broken = listener(new FailingSender(), limiter);
+        for (int attempt = 1; attempt <= CAP * 3; attempt++) {
+            broken.onRegistrationEmail(welcome());
+        }
+
+        working.onRegistrationEmail(verification());
+        working.onRegistrationEmail(verification());
+
+        assertThat(sender.sent())
+                .as("two before, one left, and nothing minted by the failed welcomes")
+                .hasSize(CAP);
+    }
+
+    private RateLimitProperties limits() {
+        return new RateLimitProperties(
+                true,
                 20, Duration.ofMinutes(15),
                 10, Duration.ofHours(1),
                 CAP, Duration.ofHours(24),
                 20_000);
-        RegistrationEmailListener unlimited = new RegistrationEmailListener(
+    }
+
+    /** A listener over its own limiter, for the tests that need two of them. */
+    private RegistrationEmailListener listenerWith(RateLimitProperties limits, EmailSender target) {
+        return listener(target, new RateLimiter(limits, clock));
+    }
+
+    /** A listener over a limiter the caller supplies, so buckets can be shared. */
+    private RegistrationEmailListener listener(EmailSender target, RateLimiter limiter) {
+        return new RegistrationEmailListener(
                 composer,
-                sender,
+                target,
                 new EmailProperties("no-reply@test.invalid", null, "https://test.invalid",
                         new EmailProperties.Brevo(null, Duration.ofSeconds(5), Duration.ofSeconds(10))),
                 inlineExecutor(),
-                new RateLimiter(off, clock));
-
-        for (int attempt = 0; attempt < CAP * 3; attempt++) {
-            unlimited.onRegistrationEmail(verification());
-        }
-
-        assertThat(sender.sent()).hasSize(CAP * 3);
+                limiter);
     }
 
     private static RegistrationEmailEvent verification() {
@@ -238,6 +326,22 @@ class RegistrationEmailLimitTest {
                 task.run();
             }
         };
+    }
+
+    /** Every send throws, the way a provider outage looks from in here. */
+    private static final class FailingSender implements EmailSender {
+
+        private int attempts;
+
+        @Override
+        public void send(EmailMessage message) {
+            attempts++;
+            throw new EmailDeliveryException("the provider is down", new java.io.IOException("refused"));
+        }
+
+        int attempts() {
+            return attempts;
+        }
     }
 
     private static final class RecordingSender implements EmailSender {

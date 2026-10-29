@@ -42,7 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
-                "app.rate-limit.enabled=true",
+                "app.rate-limit.refuse-requests=true",
                 "app.rate-limit.login-attempts=3",
                 // A plain HTTP origin: server.servlet.session.cookie.secure is
                 // true in application.yaml and the real container honours it,

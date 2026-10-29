@@ -152,10 +152,15 @@ class RegistrationEmailListener {
      */
     private void sendNow(RegistrationEmailEvent event) {
         if (!mayMail(event)) {
-            // Not a failure, and not logged as one: the cap did its job. The id
-            // and never the address, for the same reason as every other log
-            // line here.
-            log.warn("suppressed the {} email for account {}: this recipient's daily cap is spent",
+            // INFO, not WARN, and the comment used to say "not logged as a
+            // failure" above a line that logged it above the success case.
+            // This is routine: it is what the cap doing its job looks like, it
+            // is unbounded under an attack because every request past the third
+            // produces one, and the signal an operator actually wants for that
+            // is the per-address refusal in RateLimitFilter, which is a WARN
+            // and names the client. The id and never the address, for the same
+            // reason as every other log line here.
+            log.info("suppressed the {} email for account {}: this recipient's daily cap is spent",
                     event.getClass().getSimpleName(), event.userId());
             return;
         }
@@ -164,6 +169,13 @@ class RegistrationEmailListener {
             log.info("sent the {} email for account {}",
                     event.getClass().getSimpleName(), event.userId());
         } catch (RuntimeException failed) {
+            // The allowance goes back. It counts mail that reached an inbox,
+            // not attempts to hand it to a provider -- otherwise a Brevo
+            // outage plus three retries leaves the address capped for a day
+            // having received nothing, which is the limiter punishing the
+            // person it exists to protect. Same rule as ADR-005's digest
+            // watermark, which moves only after a successful send.
+            refundMail(event);
             // The id, never the event: a Verification carries the token, and a
             // token in a log file is a verification somebody else can perform.
             log.error("failed to send the registration email for account {}", event.userId(), failed);
@@ -206,10 +218,30 @@ class RegistrationEmailListener {
      * defect that survives review, and this costs one call.
      */
     private boolean mayMail(RegistrationEmailEvent event) {
-        if (event instanceof RegistrationEmailEvent.Welcome) {
-            return true;
+        if (isCapped(event)) {
+            return rateLimiter.allowRegistrationEmail(AppUser.normalizeEmail(event.email()));
         }
-        return rateLimiter.allowRegistrationEmail(AppUser.normalizeEmail(event.email()));
+        return true;
+    }
+
+    /**
+     * Puts back what {@link #mayMail} spent. Mirrors it exactly, including the
+     * exemption: refunding an event that was never charged would hand the
+     * recipient a free token every time a welcome email failed.
+     */
+    private void refundMail(RegistrationEmailEvent event) {
+        if (isCapped(event)) {
+            rateLimiter.refundRegistrationEmail(AppUser.normalizeEmail(event.email()));
+        }
+    }
+
+    /**
+     * Which events the cap applies to: the two an unauthenticated POST to
+     * {@code /register} can aim at somebody else's inbox. The welcome email is
+     * not one of them — see {@link #mayMail}.
+     */
+    private static boolean isCapped(RegistrationEmailEvent event) {
+        return !(event instanceof RegistrationEmailEvent.Welcome);
     }
 
     private EmailMessage compose(RegistrationEmailEvent event) {

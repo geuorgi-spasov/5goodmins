@@ -209,7 +209,7 @@ class ActionRepositoryTest {
 
         em.clear();
 
-        assertThat(actions.findNewestActive(laterToday, Limit.of(5)))
+        assertThat(actions.findNewestActive(laterToday, ActionSummary.EXCERPT_CHARS, Limit.of(5)))
                 .extracting(ActionSummary::title)
                 .containsExactly("Zhiva akcia");
     }
@@ -224,7 +224,7 @@ class ActionRepositoryTest {
         // The shape matters as much as the content: four columns, no author and
         // no collections, so nothing downstream can lazily reach for one
         // outside a transaction (ADR-003, open-in-view=false).
-        assertThat(actions.findNewestActive(NOW, Limit.of(5)))
+        assertThat(actions.findNewestActive(NOW, ActionSummary.EXCERPT_CHARS, Limit.of(5)))
                 .singleElement()
                 .isEqualTo(new ActionSummary(
                         saved.getId(), "Spasi gorata nad Sofia", ActionType.PETITION, "opisanie"));
@@ -242,7 +242,7 @@ class ActionRepositoryTest {
         published(author, "Podadena treta", NOW.minus(2, ChronoUnit.HOURS), ends);
         em.clear();
 
-        assertThat(actions.findNewestActive(NOW, Limit.of(5)))
+        assertThat(actions.findNewestActive(NOW, ActionSummary.EXCERPT_CHARS, Limit.of(5)))
                 .extracting(ActionSummary::title)
                 .containsExactly("Podadena parva", "Podadena treta", "Podadena vtora");
     }
@@ -264,7 +264,7 @@ class ActionRepositoryTest {
         Action second = published(author, "Vtora", sameMoment, ends);
         em.clear();
 
-        assertThat(actions.findNewestActive(NOW, Limit.of(5)))
+        assertThat(actions.findNewestActive(NOW, ActionSummary.EXCERPT_CHARS, Limit.of(5)))
                 .extracting(ActionSummary::id)
                 .containsExactly(second.getId(), first.getId());
     }
@@ -278,7 +278,7 @@ class ActionRepositoryTest {
         }
         em.clear();
 
-        List<ActionSummary> newest = actions.findNewestActive(NOW, Limit.of(5));
+        List<ActionSummary> newest = actions.findNewestActive(NOW, ActionSummary.EXCERPT_CHARS, Limit.of(5));
 
         assertThat(newest).hasSize(5);
         assertThat(newest).first().extracting(ActionSummary::title).isEqualTo("Akcia 1");
@@ -294,7 +294,7 @@ class ActionRepositoryTest {
         actions.saveAndFlush(action(author("empty@seed.example"), "Chaka odobrenie"));
         em.clear();
 
-        assertThat(actions.findNewestActive(NOW, Limit.of(5))).isEmpty();
+        assertThat(actions.findNewestActive(NOW, ActionSummary.EXCERPT_CHARS, Limit.of(5))).isEmpty();
     }
 
     /**
@@ -313,7 +313,7 @@ class ActionRepositoryTest {
         actions.saveAndFlush(action);
         em.clear();
 
-        ActionSummary summary = actions.findNewestActive(NOW, Limit.of(5)).getFirst();
+        ActionSummary summary = actions.findNewestActive(NOW, ActionSummary.EXCERPT_CHARS, Limit.of(5)).getFirst();
 
         assertThat(paragraph.length()).as("the fixture is longer than the cut").isGreaterThan(1000);
         assertThat(summary.excerpt())
@@ -327,7 +327,7 @@ class ActionRepositoryTest {
         published(author, "Кратка акция", NOW.minus(1, ChronoUnit.HOURS), NOW.plus(30, ChronoUnit.DAYS));
         em.clear();
 
-        assertThat(actions.findNewestActive(NOW, Limit.of(5)).getFirst().excerpt())
+        assertThat(actions.findNewestActive(NOW, ActionSummary.EXCERPT_CHARS, Limit.of(5)).getFirst().excerpt())
                 .isEqualTo("opisanie");
     }
 }

@@ -32,7 +32,7 @@ class RateLimitPropertiesTest {
     void shipsAdr002sNumbersWithNothingConfigured() {
         RateLimitProperties limits = bind(Map.of());
 
-        assertThat(limits.enabled()).as("on unless explicitly switched off").isTrue();
+        assertThat(limits.refuseRequests()).as("on unless explicitly switched off").isTrue();
 
         assertThat(limits.loginAttempts()).isEqualTo(20);
         assertThat(limits.loginWindow()).isEqualTo(Duration.ofMinutes(15));
@@ -49,13 +49,36 @@ class RateLimitPropertiesTest {
     /**
      * The incident switch, which is the one property anybody will ever set in
      * production, and the one the whole suite depends on.
+     *
+     * <p>It is named {@code refuse-requests} rather than {@code enabled}
+     * because that is all it does. It was called {@code enabled} and also
+     * disarmed the per-recipient mail cap, which meant the one situation it
+     * exists for was also the situation in which flipping it turned
+     * {@code /register} into a mail cannon.
      */
     @Test
     void canBeSwitchedOffWithoutRestatingEveryNumber() {
-        RateLimitProperties limits = bind(Map.of("app.rate-limit.enabled", "false"));
+        RateLimitProperties limits = bind(Map.of("app.rate-limit.refuse-requests", "false"));
 
-        assertThat(limits.enabled()).isFalse();
+        assertThat(limits.refuseRequests()).isFalse();
         assertThat(limits.loginAttempts()).isEqualTo(20);
+    }
+
+    /**
+     * And the cap it must not reach has no switch of its own to find. If a
+     * {@code app.rate-limit.*} flag ever appears that disarms the mail cap,
+     * this is the test that should have to be changed first.
+     */
+    @Test
+    void offersNoWayToSwitchOffTheMailCap() {
+        assertThat(RateLimitProperties.class.getRecordComponents())
+                .extracting(java.lang.reflect.RecordComponent::getName)
+                .containsExactly(
+                        "refuseRequests",
+                        "loginAttempts", "loginWindow",
+                        "registrationsPerAddress", "registrationsPerAddressWindow",
+                        "registrationEmailsPerRecipient", "registrationEmailsPerRecipientWindow",
+                        "maxTrackedKeys");
     }
 
     @Test

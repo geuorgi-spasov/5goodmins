@@ -59,7 +59,7 @@ import java.time.Duration;
 @Validated
 public record RateLimitProperties(
 
-        @DefaultValue("true") boolean enabled,
+        @DefaultValue("true") boolean refuseRequests,
 
         @DefaultValue("20") @Min(1) int loginAttempts,
         @DefaultValue("15m") @NotNull Duration loginWindow,

@@ -27,13 +27,18 @@ package com.fivegoodmins.fivegoodmins.action;
  * characters per action to display 140 of them. Deciding it now rather than
  * when the digest is written is the cheaper order.
  *
- * <p>The cost is that the excerpt length is in two places: {@link #EXCERPT_CHARS}
- * bounds the read, and the template decides the display length. They are not
- * the same number and must not be — the read bound has to stay comfortably
- * above the display length or the template would abbreviate text that SQL had
- * already cut, silently losing the ellipsis that says it was cut. That is the
- * same arrangement as {@code @Column(length)} against the migration
- * (ARCHITECTURE.md §2): two places, one rule, changed together by hand.
+ * <p>{@link #EXCERPT_CHARS} is defined once and reaches the query as a bound
+ * parameter through {@code ActionQueries}. It was briefly written twice, with
+ * the duplication defended as unavoidable because "JPQL cannot read a
+ * constant" and excused by analogy to {@code @Column(length)} against the
+ * migration (§2). The analogy does not hold: that duplication really is forced
+ * by {@code ddl-auto=validate}, and this one was a choice. A duplication
+ * documented as inevitable when it was not is a worse answer than either.
+ *
+ * <p>What does remain in two places is the <em>display</em> length, which each
+ * view picks for itself — and the invariant that goes with it: this read bound
+ * must stay comfortably above every display length, or a view abbreviates text
+ * SQL had already cut and loses the ellipsis that says it was cut.
  *
  * @param id         the row's identity, for a link or a test.
  * @param title      the action's own title, shown whole.
@@ -47,10 +52,9 @@ package com.fivegoodmins.fivegoodmins.action;
 public record ActionSummary(Long id, String title, ActionType actionType, String excerpt) {
 
     /**
-     * How much of {@code description} the query reads. Must stay above every
-     * display length that abbreviates this value; see the note above on why the
-     * two numbers are deliberately different. The query carries the same number
-     * as a literal, because JPQL cannot read a constant.
+     * How much of {@code description} the query reads, applied by
+     * {@code ActionQueries} and bound into the query as a parameter. Must stay
+     * above every display length that abbreviates this value.
      */
     public static final int EXCERPT_CHARS = 200;
 }

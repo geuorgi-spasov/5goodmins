@@ -86,13 +86,11 @@ public class RateLimiter {
      * and, eventually, a sentence on the page the user lands on.
      */
     Verdict tryConsume(RateLimitScope scope, String key) {
-        if (!properties.enabled()) {
-            // The incident switch, checked here rather than at each caller, so
-            // there is one place that can turn the limiter off and no caller
-            // that can forget to ask.
-            return Verdict.ALLOWED;
-        }
-        Bucket bucket = stores.get(scope).get(key, ignored -> newBucket(scope));
+        // No switch here. app.rate-limit.refuse-requests is checked by
+        // RateLimitFilter, because it gates request refusal and nothing else --
+        // see RateLimitProperties for why reaching the mail cap with it was a
+        // hole rather than a convenience.
+        Bucket bucket = bucketFor(scope, key);
         ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(1);
         return probe.isConsumed()
                 ? Verdict.ALLOWED
@@ -141,6 +139,37 @@ public class RateLimiter {
      */
     public boolean allowRegistrationEmail(String recipient) {
         return tryConsume(RateLimitScope.REGISTRATION_EMAILS_PER_RECIPIENT, recipient).allowed();
+    }
+
+    /**
+     * Puts back the token {@link #allowRegistrationEmail} spent, for a send
+     * that was attempted and failed.
+     *
+     * <p><strong>The cap counts mail that reached somebody's inbox, not
+     * attempts to hand it to a provider.</strong> Without this, a Brevo outage
+     * plus three retries by a user who can see no email leaves that address
+     * capped for twenty-four hours having received nothing -- the limiter
+     * punishing the person it exists to protect. It is the same rule ADR-005
+     * states for the digest watermark, which "moves only after a successful
+     * send", and the general form is worth naming: a side effect that bounds a
+     * resource commits on success, never on attempt.
+     *
+     * <p><strong>Consume-then-refund rather than peek-then-consume</strong>,
+     * which is the other way to get this right. The mail pool is one thread
+     * today, so peeking first is exact -- but ADR-005 says that if the digest
+     * ever needs concurrency both pool numbers move together, and on that day a
+     * peek becomes a race that over-sends while a consume stays atomic. The
+     * refund costs a compensating call on the failure path only.
+     *
+     * <p>{@code addTokens} saturates at the bucket's capacity, so a refund for
+     * a bucket that has since refilled cannot push it above full.
+     */
+    public void refundRegistrationEmail(String recipient) {
+        bucketFor(RateLimitScope.REGISTRATION_EMAILS_PER_RECIPIENT, recipient).addTokens(1);
+    }
+
+    private Bucket bucketFor(RateLimitScope scope, String key) {
+        return stores.get(scope).get(key, ignored -> newBucket(scope));
     }
 
     /**
