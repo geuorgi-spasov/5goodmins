@@ -61,6 +61,22 @@
     <link rel="stylesheet" th:href="@{/css/main.css}">
 
     <!--/*
+      htmx's own configuration, as markup rather than as a script, because
+      the CSP (ADR-020) allows no inline JavaScript. It has to come before
+      the script tag: htmx reads this meta tag when it loads.
+
+      allowEval=false turns off the three htmx features that evaluate strings
+      as code -- hx-on:* handlers, the js: prefix on hx-vals and hx-headers,
+      and event filters like hx-trigger="click[ctrlKey]". All three use the
+      Function constructor, which the CSP blocks anyway; the difference is
+      that htmx now declines them with a readable console message instead of
+      the browser reporting a policy violation from somewhere inside a
+      minified file. The replacement for all three is a handler in a file
+      under /js.
+    */-->
+    <meta name="htmx-config" content='{"allowEval": false}'>
+
+    <!--/*
       htmx, vendored at a pinned version under src/main/resources/static/js
       (ADR-020). Not a CDN: the CSP allows this origin only, a third-party
       script tag is a third party who can change the page, and an offline

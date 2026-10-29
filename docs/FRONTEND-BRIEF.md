@@ -174,6 +174,29 @@ the symptom of breaking it is a page that looks unstyled for no visible
 reason. If something you need genuinely requires loosening the policy, say so
 and we change the ADR — do not work around it.
 
+**What it forbids in htmx specifically**, since these are the attributes you
+would otherwise reach for first: `hx-on:click="..."` and its siblings, the
+`js:` prefix on `hx-vals` / `hx-headers`, and event filters such as
+`hx-trigger="click[ctrlKey]"`. All three evaluate a string as code. The layout
+sets `allowEval: false` in htmx's config so htmx declines them with a readable
+console message rather than leaving you with a policy violation reported from
+inside a minified file. Everything else in htmx — `hx-get`, `hx-post`,
+`hx-target`, `hx-swap`, `hx-trigger` without a filter, `hx-indicator`,
+`hx-confirm` — is unaffected.
+
+**And the workarounds that do work**, because "no inline styles" sounds more
+limiting than it is:
+
+- A value computed per element (a progress width, a brand colour from data)
+  — set it from a file under `/js` with `element.style.setProperty(...)`.
+  The policy blocks the *attribute* in the HTML, not the CSSOM.
+- A handful of variants — utility classes, or a `data-` attribute the
+  stylesheet selects on. `data-` attributes are markup and always allowed.
+- Dark mode — `prefers-color-scheme` in the stylesheet, and a toggle that
+  flips an attribute on `<html>` from a file under `/js`.
+- Inline SVG icons — fine as markup; give them `class` and `fill="currentColor"`
+  rather than a `style` attribute.
+
 **Static assets** live in `src/main/resources/static/` and are served from the
 root: `static/css/main.css` is `/css/main.css`. Four prefixes are public
 without a login — `/css`, `/js`, `/images`, `/fonts` — and a fifth path is not,
