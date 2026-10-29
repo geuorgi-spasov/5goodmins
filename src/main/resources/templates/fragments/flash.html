@@ -8,14 +8,22 @@
   so, and the level reaching the markup as a class rather than as colour
   alone. The styling, the icon and whether it is dismissible are yours.
 
-  The model attribute is written by shared/FlashMessage, which a controller
-  adds to RedirectAttributes before redirecting. It holds a bundle KEY, not
-  text, so the message is resolved here in the request locale.
+  Takes the message as a FRAGMENT PARAMETER rather than reading it off the
+  model, and that is not a style choice. th:replace runs at precedence 100
+  and th:with at 500, so a th:with on the same tag as the th:replace never
+  runs -- the host tag and its remaining attributes are discarded before the
+  variable is defined. Written that way, every caller silently rendered
+  nothing. A parameter is evaluated by the caller, where there is no
+  precedence question to get wrong.
+
+  The value is a shared/FlashMessage, which a controller adds to
+  RedirectAttributes before redirecting. It holds a bundle KEY, not text, so
+  the message is resolved here in the request locale.
 */-->
 <html xmlns:th="http://www.thymeleaf.org">
 <body>
 
-<div th:fragment="flash" th:if="${flash != null}"
+<div th:fragment="flash(flash)" th:if="${flash != null}"
      th:class="'flash flash--' + ${flash.level.key()}"
      th:attr="role=${flash.level.name() == 'ERROR' ? 'alert' : 'status'},
               aria-live=${flash.level.name() == 'ERROR' ? 'assertive' : 'polite'}">

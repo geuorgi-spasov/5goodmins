@@ -84,13 +84,14 @@
     <!-- ------------------------------------------------------------------ -->
     <h2>Flash messages</h2>
     <p>
-        The fragment in <code>fragments/flash.html</code>, rendered through a local
-        variable so all three levels show at once. In a real request there is one,
-        put there by a controller through <code>FlashMessage</code> before a redirect.
+        The fragment in <code>fragments/flash.html</code>, called three times so
+        all three levels show at once. In a real request there is one, put on the
+        model by a controller as a <code>FlashMessage</code> before a redirect, and
+        rendered once by the layout.
     </p>
-    <div th:with="flash=${flashSuccess}" th:replace="~{fragments/flash :: flash}"></div>
-    <div th:with="flash=${flashError}" th:replace="~{fragments/flash :: flash}"></div>
-    <div th:with="flash=${flashInfo}" th:replace="~{fragments/flash :: flash}"></div>
+    <div th:replace="~{fragments/flash :: flash(${flashSuccess})}"></div>
+    <div th:replace="~{fragments/flash :: flash(${flashError})}"></div>
+    <div th:replace="~{fragments/flash :: flash(${flashInfo})}"></div>
 
     <!-- ------------------------------------------------------------------ -->
     <h2>Empty state</h2>

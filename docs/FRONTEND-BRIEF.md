@@ -60,8 +60,10 @@ First build takes a few minutes. Then:
 development profile reads them straight out of `src/main/resources`. Java
 changes still need a restart.
 
-**Log in** as `poster@seed.5goodmins.local` / `parola123`, or as `admin@` or
-`user@` at the same domain. Development only.
+**Log in** by registering at `/register` and clicking the link in Mailpit —
+twenty seconds, and it is the real flow. The two demo authors who own the seed
+content cannot log in on purpose: that content ships to the live site, so a
+password written down here would be a password on the live site (ADR-021).
 
 **Where things are:**
 
@@ -182,7 +184,10 @@ sets `allowEval: false` in htmx's config so htmx declines them with a readable
 console message rather than leaving you with a policy violation reported from
 inside a minified file. Everything else in htmx — `hx-get`, `hx-post`,
 `hx-target`, `hx-swap`, `hx-trigger` without a filter, `hx-indicator`,
-`hx-confirm` — is unaffected.
+`hx-confirm` — is unaffected. `hx-indicator` has one wrinkle that is already
+handled: htmx would normally inject its `.htmx-indicator` rules as an inline
+`<style>` block, which the policy blocks, so that injection is turned off and
+the three rules live in `main.css` — design them, don't delete them.
 
 **And the workarounds that do work**, because "no inline styles" sounds more
 limiting than it is:
@@ -468,9 +473,9 @@ the top of the page with an image.** Full images live on the detail page. If
 you'd rather do it differently after seeing real content, propose it.
 
 **Content for mockups:** the seed content exists — 31 actions in realistic
-Bulgarian, loaded automatically in development (ADR-021), readable in
-`src/main/resources/db/dev-seed/R__dev_seed.sql` and copy-pasteable into a
-mockup. It is chosen to include the cases that break layouts rather than 31
+Bulgarian, loaded in every environment (ADR-021), readable in
+`src/main/resources/db/seed/V100__seed_demo_data.sql` and copy-pasteable into
+a mockup. It is chosen to include the cases that break layouts rather than 31
 comfortable ones: an action with **no external link**, one that is expired, one
 in each of the three non-public statuses, one with three regions, one with a
 video, and one with a title at the full 200 characters and a description long

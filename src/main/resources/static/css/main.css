@@ -29,3 +29,20 @@
      */
     --colour-brand: #14b8a6;
 }
+
+/*
+ * htmx's loading indicator. These three rules are htmx's own defaults, moved
+ * here because htmx would otherwise inject them as an inline <style> block,
+ * which the Content-Security-Policy blocks -- see the config meta tag in
+ * layout.html. Design them; do not delete them, or hx-indicator stops doing
+ * anything and section 6 of the frontend brief quietly stops being true.
+ */
+.htmx-indicator {
+    opacity: 0;
+    transition: opacity 200ms ease-in;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+    opacity: 1;
+}

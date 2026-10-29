@@ -1,67 +1,74 @@
--- R__dev_seed.sql — development content. NEVER RUNS IN PRODUCTION.
+-- V100__seed_demo_data.sql — the demo content.
 --
--- Flyway reads this directory only when the `dev` profile is active
--- (application-dev.yaml adds classpath:db/dev-seed to spring.flyway.locations).
--- The deployed jar starts with no profile, so it reads db/migration alone and
--- this file is invisible to it. Seed data is not schema: it does not belong in
--- a versioned migration, and ADR-021 is the decision behind that split.
+-- **This runs in every environment, including the deployed site**, which is
+-- the decision in ARCHITECTURE.md §4 and the reason this is an ordinary
+-- versioned migration rather than anything cleverer: the deployed site is the
+-- portfolio, and an aggregator with no ingestion pipeline and no onboarded
+-- NGOs is an empty page until something puts content in it. ADR-021 records
+-- the two sub-decisions §4 did not cover — who these accounts are, and why
+-- the test suite is the one place that does NOT load this file.
 --
--- Repeatable (R__), so Flyway re-applies it whenever its checksum changes --
--- edit the content, restart, and the database follows. That only works if the
--- file is idempotent, which is what the DELETE below is for: every row here
--- hangs off a seed user, and app_user -> action is ON DELETE CASCADE, so
--- removing the three users removes everything this file ever created and
--- nothing a developer typed in by hand.
+-- Numbered 100 so the schema keeps V1–V20. It lives in db/seed rather than
+-- db/migration so that one line of test configuration can leave it out;
+-- `spring.flyway.locations` in application.yaml names both directories, so
+-- development and production are identical and there is no profile involved.
 --
--- The content is realistic Bulgarian, not lorem ipsum, because Cyrillic
--- changes line length and rhythm and because a filter is only exercised by
--- data that actually varies (frontend brief, section 7). It deliberately
--- includes the awkward cases: an action with no external link, an expired
--- one, one of each non-published status, three regions on one action, and a
--- title at the 200-character limit.
+-- Versioned, so it is applied once and then frozen like any other migration:
+-- **editing this file after it has run is a checksum failure, not an edit.**
+-- Locally, re-seed with `docker compose down -v` and start again; once it has
+-- run on Railway, more content is a V101.
+--
+-- Two rules on the content, from §4. Seeded authors use emails at
+-- `seed.example` — a reserved domain (RFC 2606) that can never receive mail,
+-- so one DELETE plus the ON DELETE CASCADE removes every demo row the day
+-- real NGOs arrive. And every date is relative to now(), because fixed
+-- literals mean the whole catalogue is expired and invisible on the day you
+-- demo it.
+--
+-- The content deliberately includes the awkward cases rather than 31
+-- comfortable ones: an action with no external link, an expired one, one of
+-- each non-published status, three regions on one action, and a title at the
+-- 200-character limit.
+
 
 -- ---------------------------------------------------------------------------
--- 1. Clean slate
--- ---------------------------------------------------------------------------
-
-DELETE FROM app_user WHERE email LIKE '%@seed.5goodmins.local';
-
-
--- ---------------------------------------------------------------------------
--- 2. Three accounts, one per role
+-- 1. The two demo authors
 -- ---------------------------------------------------------------------------
 --
--- Password for all three: `parola123`. The hash is BCrypt with the {bcrypt}
--- prefix DelegatingPasswordEncoder writes, so these log in through the normal
--- form. A published password in a published file is fine here and only here:
--- the addresses are at a domain that cannot receive mail, and this file never
--- reaches a deployed database.
+-- **Nobody can log in as either of them, and that is the point.** This file
+-- runs on the live site, so a password published in this repository would be
+-- a published password for a real account on a real deployment. Each hash
+-- below is BCrypt over 32 bytes from SecureRandom that were never written
+-- down: syntactically a hash, verifiable against nothing. There is no
+-- password-reset flow to recover them with either (that is v1.1), so these
+-- rows are content, permanently.
 --
--- email_verified_at is set, because an unverified account cannot log in
--- (AppUserDetailsService) and would be deleted by the nightly purge.
+-- To get an account for yourself in development, register at /register and
+-- click the link Mailpit catches on :8025 — that is the real flow, it takes
+-- twenty seconds, and it is also how you test it. The README has the one line
+-- of SQL that promotes your own row to ADMIN.
+--
+-- email_verified_at is set anyway, for two reasons that are not about login:
+-- the nightly purge deletes accounts that never confirmed (ADR-002), and it
+-- would otherwise take the demo content with them after seven days.
 
 INSERT INTO app_user (email, password_hash, display_name, bio, website_url,
                       role, email_verified_at, poster_verified_at, locale, created_at)
 VALUES
-    ('admin@seed.5goodmins.local',
-     '{bcrypt}$2a$10$.1V/MOzbDatVJc0A1.6XMuxxxeYP3uINDoo2Hu02EPduie72FJgcG',
-     'Админ', 'Поддържа платформата.', NULL,
-     'ADMIN', now() - interval '90 days', now() - interval '90 days', 'bg', now() - interval '90 days'),
-
-    ('poster@seed.5goodmins.local',
-     '{bcrypt}$2a$10$.1V/MOzbDatVJc0A1.6XMuxxxeYP3uINDoo2Hu02EPduie72FJgcG',
+    ('poster@seed.example',
+     '{bcrypt}$2a$10$dobZUZ/Tizsicz/wPiaDmu.AAl4B.7x3x8cXBvHWD9dnA3eW6lHza',
      'Зелена Варна', 'Гражданско сдружение за опазване на Черноморското крайбрежие. Работим от 2014 г.',
      'https://example.org/zelena-varna',
      'POSTER', now() - interval '60 days', now() - interval '45 days', 'bg', now() - interval '60 days'),
 
-    ('user@seed.5goodmins.local',
-     '{bcrypt}$2a$10$.1V/MOzbDatVJc0A1.6XMuxxxeYP3uINDoo2Hu02EPduie72FJgcG',
+    ('user@seed.example',
+     '{bcrypt}$2a$10$eM4mKnp1W9YQLScc10OzkewSc3ZsITMyC5jDaJgzc0X6/1W6coJJK',
      'Мария Петрова', 'Учител по биология. Интересувам се от екология и права на животните.', NULL,
      'USER', now() - interval '30 days', NULL, 'bg', now() - interval '30 days');
 
 
 -- ---------------------------------------------------------------------------
--- 3. The actions
+-- 2. The actions
 -- ---------------------------------------------------------------------------
 --
 -- One VALUES list driving a loop, rather than 31 INSERT statements followed
@@ -212,9 +219,12 @@ BEGIN
              ARRAY['ANIMALS'], ARRAY['DOBRICH'], 'PUBLISHED', 25, 48, 'user'),
 
             -- The video variant: the detail page embeds a whitelisted host.
+            -- The id is a placeholder and resolves to nothing. Put a real
+            -- Bulgarian video here before this is demoed to anyone -- and
+            -- never a joke link, because this row is what ends up on screen.
             ('Какво се случва с боклука, който изхвърляме',
              'Десетминутен филм на доброволци за пътя на отпадъците от контейнера до депото и за това колко малко от тях се рециклират.',
-             'OTHER', 'https://example.org/film/boklukat', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+             'OTHER', 'https://example.org/film/boklukat', 'https://www.youtube.com/watch?v=OtpadaciBG1',
              ARRAY['NATURE'], ARRAY['NATIONAL'], 'PUBLISHED', 26, 150, 'poster'),
 
             -- A title at the 200-character limit and a long description, so the
@@ -255,7 +265,7 @@ BEGIN
                             external_url, normalized_url, video_url,
                             status, published_at, ends_at, created_at, updated_at)
         VALUES (
-            (SELECT id FROM app_user WHERE email = seeded.author || '@seed.5goodmins.local'),
+            (SELECT id FROM app_user WHERE email = seeded.author || '@seed.example'),
             seeded.title,
             seeded.description,
             seeded.action_type,

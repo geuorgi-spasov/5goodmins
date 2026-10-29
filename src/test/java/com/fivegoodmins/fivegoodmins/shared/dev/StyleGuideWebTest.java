@@ -42,14 +42,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * rather than a restart, and a typo in it breaks every page in development
  * while CI stays green.
  *
- * <p>The Flyway location is put back to the production list on purpose. The
- * dev profile adds {@code db/dev-seed}, whose repeatable migration inserts 31
- * actions and three users; the whole suite shares one PostgreSQL container
- * (TestcontainersConfiguration), so letting it run here would leave that
- * content in the database every other test reads. The seed is development
- * data, verified by running the application, not by this.
  */
-@SpringBootTest(properties = "spring.flyway.locations=classpath:db/migration")
+@SpringBootTest
 @ActiveProfiles("dev")
 @Import(TestcontainersConfiguration.class)
 class StyleGuideWebTest {
@@ -96,6 +90,29 @@ class StyleGuideWebTest {
                 // Vendored, not a CDN: the Content-Security-Policy allows
                 // scripts from this origin only (ADR-020).
                 .andExpect(content().string(containsString("/js/htmx-2.0.11.min.js")));
+    }
+
+    @Test
+    void rendersAllThreeFlashLevelsWithTheirTextAndNotJustTheirMarkup() throws Exception {
+        // Asserting the TEXT, because the first version of this page did not
+        // render any. The examples were passed with a th:with on the same tag
+        // as the th:replace -- precedence 100 against 500, so the fragment ran
+        // before the variable existed, th:if saw null, and all three
+        // disappeared with no error anywhere. A test that checked for a
+        // "flash" class would have passed just as happily.
+        mockMvc.perform(get(STYLE_GUIDE))
+                .andExpect(status().isOk())
+                // SUCCESS and ERROR: the message resolved from its key.
+                .andExpect(content().string(containsString("Вече може да влезете в профила си")))
+                .andExpect(content().string(containsString("Грешен имейл адрес или парола")))
+                // INFO, which also carries a MessageFormat argument through
+                // the fragment -- the half that silently renders "{0}" when
+                // the arguments are passed the wrong way.
+                .andExpect(content().string(containsString("Връзката е валидна 7 дни")))
+                // The level, spelled out for anyone who cannot see the colour.
+                .andExpect(content().string(containsString("Информация")))
+                // And the error is announced assertively; the other two are not.
+                .andExpect(content().string(containsString("role=\"alert\"")));
     }
 
     @Test

@@ -77,18 +77,25 @@ copy of the application in a container and fight it for port 8080.
 - Mailpit (catches outgoing mail) — http://localhost:8025
 - PostgreSQL — localhost:5432, database `fivegoodmins`, user/password `app`
 
-Flyway applies the migrations on startup, and in development it also applies
-`db/dev-seed/R__dev_seed.sql`: 31 actions in realistic Bulgarian and three
-accounts, one per role (ADR-021).
+Flyway applies the migrations on startup, including
+`db/seed/V100__seed_demo_data.sql` — 31 actions in realistic Bulgarian under
+two demo authors. That one runs everywhere, deployed site included, because an
+aggregator with no content demos as a blank page (ADR-021). The test suite is
+the only configuration that leaves it out.
 
-| Account | Role |
-|---|---|
-| `admin@seed.5goodmins.local` | `ADMIN` |
-| `poster@seed.5goodmins.local` | `POSTER` |
-| `user@seed.5goodmins.local` | `USER` |
+**Neither demo author can log in**: their password hashes are BCrypt over
+random bytes that were never recorded, because this file runs in production.
+To get an account, register at http://localhost:8080/register and click the
+link Mailpit catches — the real flow, and the fastest way to check it still
+works. To make that account an admin:
 
-All three have the password `parola123`. They exist only in development: the
-seed is in a Flyway location the `dev` profile adds and nothing else reads.
+```bash
+docker compose exec db psql -U app -d fivegoodmins -c "update app_user set role = 'ADMIN' where email = 'you@example.com';"
+```
+
+Re-seeding after editing `V100__` means starting the database over —
+`docker compose down -v` — because a versioned migration that has already run
+is frozen by its checksum.
 
 **Templates, CSS and JavaScript reload on save** — no restart, no rebuild. The
 `dev` profile points Thymeleaf and the static resource handler at

@@ -54,13 +54,6 @@ spring:
     resources:
       static-locations: file:./src/main/resources/static/,classpath:/static/
 
-  # Flyway reads one extra location in development: db/dev-seed, which holds a
-  # repeatable migration of realistic Bulgarian content (ADR-020). Seed data
-  # is not schema, so it is not in db/migration -- the deployed application
-  # never sees this directory, because it never activates this profile.
-  flyway:
-    locations: classpath:db/migration,classpath:db/dev-seed
-
 # A local run is plain HTTP on localhost, and a Secure cookie is not sent over
 # it by every browser -- Safari refuses, so the session silently never sticks.
 # Off here, true in application.yaml, which is the deployed default.
