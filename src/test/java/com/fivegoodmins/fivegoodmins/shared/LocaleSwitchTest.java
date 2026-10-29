@@ -1,9 +1,14 @@
 package com.fivegoodmins.fivegoodmins.shared;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.mock.web.MockHttpServletRequest;
 
+import java.util.Locale;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * The URI-building edge cases of {@link LocaleSwitch}, as a plain object.
@@ -20,7 +25,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class LocaleSwitchTest {
 
+    private static final Locale BULGARIAN = Locale.forLanguageTag("bg");
+
     private final LocaleSwitch advice = new LocaleSwitch();
+
+    /**
+     * {@code LocaleContextHolder} is a thread local and Surefire reuses the JVM
+     * and its threads across test classes, so a locale left set here would
+     * follow whatever runs next -- masking a failure, or inventing one.
+     */
+    @AfterEach
+    void clearLocaleContext() {
+        LocaleContextHolder.resetLocaleContext();
+    }
 
     private static MockHttpServletRequest request(String uri, String query) {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", uri);
@@ -70,12 +87,38 @@ class LocaleSwitchTest {
     }
 
     @Test
-    void offersBothLanguagesAndMarksExactlyOneAsCurrent() {
+    void offersBothLanguagesInTheOrderTheyAreConfigured() {
+        // From LocaleConfig.SUPPORTED, so Bulgarian is first (ADR-008). Not
+        // locale-dependent, unlike the `current` flag below.
         assertThat(advice.languageLinks(request("/register", null)))
                 .extracting(LocaleSwitch.LanguageLink::tag)
                 .containsExactly("bg", "en");
+    }
+
+    @Test
+    void marksTheLanguageBeingReadAsCurrentAndLeavesTheOtherALink() {
+        // The locale is set explicitly, and that is the fix for a real bug in
+        // the first version of this test rather than ceremony. With no request
+        // bound, LocaleContextHolder.getLocale() falls back to
+        // Locale.getDefault() -- so a test asserting "exactly one is current"
+        // passed on a bg/en machine and failed for anyone running with, say,
+        // -Duser.language=de, where neither tag matches and the answer is
+        // zero. Measured: it fails with "Expected size: 1 but was: 0".
+        //
+        // Setting it is better than loosening the assertion to "at most one",
+        // because it lets this assert WHICH language is current -- which is the
+        // behaviour the layout depends on to render one of them as text rather
+        // than as a link that goes nowhere.
+        LocaleContextHolder.setLocale(BULGARIAN);
         assertThat(advice.languageLinks(request("/register", null)))
-                .filteredOn(LocaleSwitch.LanguageLink::current)
-                .hasSize(1);
+                .extracting(LocaleSwitch.LanguageLink::tag, LocaleSwitch.LanguageLink::current)
+                .containsExactly(tuple("bg", true), tuple("en", false));
+
+        // Both directions, so the flag is known to follow the context rather
+        // than to be hardcoded to the default language.
+        LocaleContextHolder.setLocale(Locale.forLanguageTag("en"));
+        assertThat(advice.languageLinks(request("/register", null)))
+                .extracting(LocaleSwitch.LanguageLink::tag, LocaleSwitch.LanguageLink::current)
+                .containsExactly(tuple("bg", false), tuple("en", true));
     }
 }
